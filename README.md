@@ -32,13 +32,13 @@ pure local computation. When a check cannot be reached, the tool says so; it nev
 Python 3.12+.
 
 ```bash
-pip install "git+https://github.com/netbasecorp/adminkit-mcp@v0.1.0"
+pip install adminkit-mcp
 ```
 
 or run it without installing, with [uv](https://docs.astral.sh/uv/):
 
 ```bash
-uvx --from "git+https://github.com/netbasecorp/adminkit-mcp@v0.1.0" adminkit-mcp
+uvx adminkit-mcp
 ```
 
 ### Claude Desktop / Claude Code / Cursor (stdio)
@@ -48,7 +48,7 @@ uvx --from "git+https://github.com/netbasecorp/adminkit-mcp@v0.1.0" adminkit-mcp
   "mcpServers": {
     "adminkit": {
       "command": "uvx",
-      "args": ["--from", "git+https://github.com/netbasecorp/adminkit-mcp@v0.1.0", "adminkit-mcp"]
+      "args": ["adminkit-mcp"]
     }
   }
 }
