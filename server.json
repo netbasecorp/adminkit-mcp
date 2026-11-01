@@ -1,5 +1,5 @@
 {
-  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-09-29/server.schema.json",
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.netbasecorp/adminkit-mcp",
   "title": "AdminKit",
   "description": "Network, DNS, mail-auth and MCP endpoint security checks for AI agents, backed by adminkit.net.",
