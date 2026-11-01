@@ -1,0 +1,21 @@
+name: Scan MCP endpoint
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "0 6 * * 1" # weekly, Monday 06:00 UTC
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Scan our public MCP endpoint
+        id: scan
+        uses: netbasecorp/adminkit-mcp@v0.1.0
+        with:
+          url: https://mcp.example.com/mcp
+          fail-on: critical
+
+      - name: Show the score
+        run: echo "AdminKit MCP exposure score: ${{ steps.scan.outputs.score }}"

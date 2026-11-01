@@ -1,0 +1,65 @@
+name: "AdminKit MCP Scan"
+description: >-
+  Scan an MCP endpoint for anonymous-access exposure (no auth required, tool list readable,
+  dangerous tool names, no TLS) using AdminKit's open-source, read-only `adminkit-mcp` probe.
+  Never sends `tools/call`.
+author: "Netbase JSC"
+branding:
+  icon: "shield"
+  color: "blue"
+
+inputs:
+  url:
+    description: "MCP endpoint URL to scan, e.g. https://example.com/mcp"
+    required: true
+  fail-on:
+    description: >-
+      Minimum result that fails the step: "none" (never fail on findings), "warning" (any
+      finding), or "critical" (a high/critical-severity finding). A scan that cannot reach the
+      target at all always fails the step, independent of this setting.
+    required: false
+    default: "critical"
+  api-key:
+    description: >-
+      Optional AdminKit API key. Reserved for future submission of scan results to the AdminKit
+      dashboard; the current probe is anonymous-only and does not send it to the scanned target.
+    required: false
+    default: ""
+  allow-private:
+    description: >-
+      Allow scanning a private/loopback target. Only intended for CI jobs that scan a fixture
+      server they started themselves; leave this false for any real endpoint.
+    required: false
+    default: "false"
+
+outputs:
+  score:
+    description: "0-100 exposure score (lower is worse); empty if the target could not be reached"
+    value: ${{ steps.scan.outputs.score }}
+  findings-json:
+    description: "JSON array of findings: [{id, severity, title, detail, fix_hint}, ...]"
+    value: ${{ steps.scan.outputs.findings-json }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install adminkit-mcp (pinned to this action's own git ref)
+      shell: bash
+      run: pip install "${{ github.action_path }}"
+
+    - name: Scan MCP endpoint
+      id: scan
+      shell: bash
+      env:
+        ADMINKIT_API_KEY: ${{ inputs.api-key }}
+      run: |
+        set -- --url "${{ inputs.url }}" --fail-on "${{ inputs.fail-on }}"
+        if [ "${{ inputs.allow-private }}" = "true" ]; then
+          set -- "$@" --allow-private
+        fi
+        python "${{ github.action_path }}/action/scan.py" "$@"
