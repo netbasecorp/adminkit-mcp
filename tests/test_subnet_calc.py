@@ -21,7 +21,7 @@ async def test_subnet_calc_tool() -> None:
     assert result.status == "ok"
     assert result.result["network"] == "192.0.2.0"
     assert result.result["usable_hosts"] == "254"
-    assert result.report_url == "https://adminkit.net/tools/subnet-calculator/"
+    assert result.report_url == "https://adminkit.net/tools/subnet-calculator/?utm_source=mcp"
 
 
 async def test_subnet_calc_tool_calls_correct_path_with_cidr_param() -> None:

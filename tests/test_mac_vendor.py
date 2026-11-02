@@ -27,7 +27,7 @@ async def test_mac_vendor_tool() -> None:
     assert result.status == "ok"
     assert result.result["found"] is True
     assert result.result["organization"] == "Example Networks Inc."
-    assert result.report_url == "https://adminkit.net/tools/mac-lookup/"
+    assert result.report_url == "https://adminkit.net/tools/mac-lookup/?utm_source=mcp"
 
 
 async def test_mac_vendor_tool_unknown_oui_is_honest_not_found() -> None:

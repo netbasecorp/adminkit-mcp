@@ -27,7 +27,7 @@ async def test_ip_info_tool() -> None:
     assert result.status == "ok"
     assert result.result["ip"] == "203.0.113.9"
     assert result.result["reverse_dns"] == "9.113.0.203.in-addr.arpa"
-    assert result.report_url == "https://adminkit.net/tools/"
+    assert result.report_url == "https://adminkit.net/tools/?utm_source=mcp"
 
 
 async def test_ip_info_tool_calls_correct_path_with_ip_param() -> None:

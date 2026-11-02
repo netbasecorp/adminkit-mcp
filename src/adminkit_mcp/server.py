@@ -16,11 +16,17 @@ from mcp.server.fastmcp import FastMCP
 
 from adminkit_mcp.client import AdminKitClient
 from adminkit_mcp.config import Settings
+from adminkit_mcp.hosted import refuse_private_target
+from adminkit_mcp.tools.check_domain import WHOIS_PAGE
 from adminkit_mcp.tools.check_domain import check_domain as _check_domain
 from adminkit_mcp.tools.check_ip import check_ip as _check_ip
+from adminkit_mcp.tools.check_mail_auth import MAIL_AUTH_PAGE
 from adminkit_mcp.tools.check_mail_auth import check_mail_auth as _check_mail_auth
+from adminkit_mcp.tools.check_mcp_endpoint import MCP_CHECK_PAGE
 from adminkit_mcp.tools.check_mcp_endpoint import check_mcp_endpoint as _check_mcp_endpoint
+from adminkit_mcp.tools.check_owned_ports import PORT_CHECK_PAGE
 from adminkit_mcp.tools.check_owned_ports import check_owned_ports as _check_owned_ports
+from adminkit_mcp.tools.dns_lookup import DNS_LOOKUP_PAGE
 from adminkit_mcp.tools.dns_lookup import dns_lookup as _dns_lookup
 from adminkit_mcp.tools.explain_report import explain_report as _explain_report
 from adminkit_mcp.tools.get_radar import get_radar as _get_radar
@@ -33,8 +39,11 @@ from adminkit_mcp.tools.user_agent import user_agent as _user_agent
 
 def build_server(client: AdminKitClient, *, settings: Settings | None = None) -> FastMCP:
     """Builds a FastMCP server bound to `client`. `settings` controls the default for the
-    `allow_private` argument of `check_mcp_endpoint` (CI runners set it via env/flag)."""
+    `allow_private` argument of `check_mcp_endpoint` (CI runners set it via env/flag), and
+    whether hosted-HTTP-mode guards (plan row A14) are active: `settings.hosted_http` is
+    only True when serving `--http`, never for stdio/local use."""
     allow_private_default = settings.allow_private_targets if settings else False
+    hosted_mode = bool(settings and settings.hosted_http)
     mcp: FastMCP[Any] = FastMCP(
         name="adminkit",
         instructions=(
@@ -53,22 +62,38 @@ def build_server(client: AdminKitClient, *, settings: Settings | None = None) ->
     @mcp.tool()
     async def dns_lookup(name: str, type: str = "A") -> dict[str, Any]:
         """DNS lookup for a name. `type` is one of A, AAAA, MX, TXT, NS, CAA, PTR, SOA, CNAME."""
+        if hosted_mode:
+            refused = await refuse_private_target("dns_lookup", name, report_url=DNS_LOOKUP_PAGE)
+            if refused:
+                return refused.to_dict()
         return (await _dns_lookup(client, name, type)).to_dict()
 
     @mcp.tool()
     async def check_mail_auth(domain: str) -> dict[str, Any]:
         """Check SPF and DMARC posture for a domain's outbound mail authentication."""
+        if hosted_mode:
+            refused = await refuse_private_target("check_mail_auth", domain, report_url=MAIL_AUTH_PAGE)
+            if refused:
+                return refused.to_dict()
         return (await _check_mail_auth(client, domain)).to_dict()
 
     @mcp.tool()
     async def check_domain(domain: str) -> dict[str, Any]:
         """Aggregate domain health overview: whois, TLS, HTTP headers (Check API)."""
+        if hosted_mode:
+            refused = await refuse_private_target("check_domain", domain, report_url=WHOIS_PAGE)
+            if refused:
+                return refused.to_dict()
         return (await _check_domain(client, domain)).to_dict()
 
     @mcp.tool()
     async def check_owned_ports(target: str) -> dict[str, Any]:
         """Check commonly-exposed device ports on a target you have verified you own.
         Requires AdminKit asset ownership verification; never an unverified scan."""
+        if hosted_mode:
+            refused = await refuse_private_target("check_owned_ports", target, report_url=PORT_CHECK_PAGE)
+            if refused:
+                return refused.to_dict()
         return (await _check_owned_ports(client, target)).to_dict()
 
     @mcp.tool()
@@ -87,7 +112,15 @@ def build_server(client: AdminKitClient, *, settings: Settings | None = None) ->
         """Probe an MCP server endpoint for anonymous access: whether `initialize` and
         `tools/list` succeed without credentials, auth/OAuth discovery, TLS, and
         dangerous-looking tool names. Never calls a tool. `allow_private` permits probing
-        loopback/private targets (CI use only); it is refused by default."""
+        loopback/private targets (CI use only); it is refused by default, and always refused
+        on the public hosted endpoint regardless of this argument."""
+        if hosted_mode:
+            refused = await refuse_private_target(
+                "check_mcp_endpoint", url, report_url=MCP_CHECK_PAGE, is_url=True
+            )
+            if refused:
+                return refused.to_dict()
+            allow_private = False
         return (await _check_mcp_endpoint(client, url, allow_private)).to_dict()
 
     # --- Offline utilities (spec section 18.1/18.7): pure math over /v1/tools/*, no

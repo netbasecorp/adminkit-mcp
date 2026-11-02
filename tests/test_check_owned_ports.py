@@ -14,7 +14,7 @@ async def test_check_owned_ports_not_available_yet() -> None:
     finally:
         await client.aclose()
     assert result.status == "not_available"
-    assert result.report_url == "https://adminkit.net/tools/port-check/"
+    assert result.report_url == "https://adminkit.net/tools/port-check/?utm_source=mcp"
 
 
 async def test_check_owned_ports_uses_live_api_when_available() -> None:

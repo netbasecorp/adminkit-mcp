@@ -30,7 +30,7 @@ async def test_get_radar_no_protocol_points_to_radar_page() -> None:
     finally:
         await client.aclose()
     assert result.status == "not_available"
-    assert result.report_url == "https://adminkit.net/radar/"
+    assert result.report_url == "https://adminkit.net/radar/?utm_source=mcp"
 
 
 async def test_get_radar_rejects_unknown_protocol() -> None:

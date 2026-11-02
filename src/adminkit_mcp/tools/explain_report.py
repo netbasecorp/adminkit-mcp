@@ -36,8 +36,7 @@ async def explain_report(client: AdminKitClient, report_token: str) -> ToolRespo
             tool=TOOL,
             status="not_available",
             result={
-                "message": f"No saved report for token {report_token!r} "
-                "(unknown or expired share link)."
+                "message": f"No saved report for token {report_token!r} (unknown or expired share link)."
             },
             fix_hint="Share links expire after 30 days; re-run the check with sharing enabled "
             "to get a new one.",
@@ -75,12 +74,13 @@ async def explain_report(client: AdminKitClient, report_token: str) -> ToolRespo
             "cited_evidence_ids": payload.get("cited_evidence_ids", []),
         },
         evidence={"check_result": check_result},
-        report_url=report_url,
+        report_url=report_url or DEFAULT_PAGE,
     )
 
 
 def _map_explain_error(response: httpx.Response, report_url: str | None) -> ToolResponse:
     detail = _problem_detail(response)
+    report_url = report_url or DEFAULT_PAGE
 
     if response.status_code == 503:
         return ToolResponse(
@@ -92,7 +92,7 @@ def _map_explain_error(response: httpx.Response, report_url: str | None) -> Tool
             },
             fix_hint="AI explanations need an AI provider key configured on this AdminKit "
             "deployment; see the public page for current status.",
-            report_url=report_url or DEFAULT_PAGE,
+            report_url=report_url,
         )
     if response.status_code in (401, 403):
         return ToolResponse(

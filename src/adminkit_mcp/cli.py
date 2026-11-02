@@ -9,8 +9,11 @@ import json
 import sys
 from dataclasses import replace
 
+import uvicorn
+
 from adminkit_mcp.client import AdminKitClient
-from adminkit_mcp.config import Settings
+from adminkit_mcp.config import Settings, for_hosted_http
+from adminkit_mcp.hosted import build_hosted_http_app
 from adminkit_mcp.probe.mcp_probe import probe_mcp_endpoint
 from adminkit_mcp.server import build_server
 
@@ -61,6 +64,11 @@ def main(argv: list[str] | None = None) -> int:
     settings = Settings.from_env()
     if args.allow_private:
         settings = replace(settings, allow_private_targets=True)
+    if args.http:
+        # Plan row A14: `--http` is the public hosted endpoint, so it is always anonymous
+        # (never forwards the host env's ADMINKIT_API_KEY) even if --allow-private was also
+        # passed for some other reason.
+        settings = for_hosted_http(settings)
 
     async def _serve() -> None:
         async with AdminKitClient.from_settings(settings) as client:
@@ -69,7 +77,9 @@ def main(argv: list[str] | None = None) -> int:
                 host, port = _parse_http_target(args.http)
                 mcp.settings.host = host
                 mcp.settings.port = port
-                await mcp.run_streamable_http_async()
+                app = build_hosted_http_app(mcp, settings=settings)
+                config = uvicorn.Config(app, host=host, port=port, log_level=mcp.settings.log_level.lower())
+                await uvicorn.Server(config).serve()
             else:
                 await mcp.run_stdio_async()
 

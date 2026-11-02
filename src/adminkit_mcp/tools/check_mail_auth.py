@@ -23,7 +23,7 @@ async def check_mail_auth(client: AdminKitClient, domain: str) -> ToolResponse:
         resp = await client.call_api("POST", "/v1/check/mail", json={"target": domain, "options": {}})
     except ApiUnavailable:
         return await _from_site(client, domain)
-    return map_check_result(TOOL, resp.json())
+    return map_check_result(TOOL, resp.json(), fallback_report_url=MAIL_AUTH_PAGE)
 
 
 async def _from_site(client: AdminKitClient, domain: str) -> ToolResponse:

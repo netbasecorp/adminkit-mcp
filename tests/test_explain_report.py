@@ -41,7 +41,7 @@ async def test_explain_report_fetches_report_then_calls_ai() -> None:
     assert result.status == "ok"
     assert result.result["explanation"] == explanation["explanation"]
     assert result.result["cited_evidence_ids"] == explanation["cited_evidence_ids"]
-    assert result.report_url == report["report_url"]
+    assert result.report_url == report["report_url"] + "?utm_source=mcp"
     assert calls == ["GET /v1/report/rpt_01H8", "POST /v1/ai/explain"]
     assert "/v1/reports/rpt_01H8/explain" not in calls
     assert not any(path.startswith("/v1/reports/") for _method, path in (c.split(" ", 1) for c in calls))

@@ -11,8 +11,14 @@ from adminkit_mcp.client import AdminKitClient, ApiUnavailable
 from adminkit_mcp.envelope import ToolResponse, not_available_yet
 
 
-def map_check_result(tool: str, payload: dict[str, Any]) -> ToolResponse:
-    """Maps a `CheckResultResponse` JSON body (platform/openapi.stub.yaml) to a ToolResponse."""
+def map_check_result(
+    tool: str, payload: dict[str, Any], *, fallback_report_url: str | None = None
+) -> ToolResponse:
+    """Maps a `CheckResultResponse` JSON body (platform/openapi.stub.yaml) to a ToolResponse.
+
+    Uses the API-issued `report_url` (a shareable report link) when present; otherwise
+    falls back to `fallback_report_url` (the tool's own public page), per plan row A16.
+    """
     status = payload.get("status", "error")
     findings = payload.get("findings", [])
     fix_hint = findings[0].get("fix_hint") if findings and isinstance(findings[0], dict) else None
@@ -28,12 +34,18 @@ def map_check_result(tool: str, payload: dict[str, Any]) -> ToolResponse:
         },
         evidence=payload.get("evidence", {}),
         fix_hint=fix_hint,
-        report_url=payload.get("report_url"),
+        report_url=payload.get("report_url") or fallback_report_url,
     )
 
 
 async def run_check(
-    client: AdminKitClient, tool: str, kind: str, target: str, *, options: dict[str, Any] | None = None
+    client: AdminKitClient,
+    tool: str,
+    kind: str,
+    target: str,
+    *,
+    options: dict[str, Any] | None = None,
+    fallback_report_url: str | None = None,
 ) -> ToolResponse | None:
     """POSTs `/v1/check/{kind}`. Returns None on 404/501 so the caller can fall back."""
     try:
@@ -42,7 +54,7 @@ async def run_check(
         )
     except ApiUnavailable:
         return None
-    return map_check_result(tool, resp.json())
+    return map_check_result(tool, resp.json(), fallback_report_url=fallback_report_url)
 
 
 def not_available(tool: str, *, page: str, what: str) -> ToolResponse:

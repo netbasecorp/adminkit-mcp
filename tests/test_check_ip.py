@@ -36,7 +36,7 @@ async def test_check_ip_falls_back_to_site_on_501() -> None:
         await client.aclose()
     assert result.status == "ok"
     assert result.result["ip"] == "203.0.113.5"
-    assert result.report_url == "https://adminkit.net/tools/my-ip/"
+    assert result.report_url == "https://adminkit.net/tools/my-ip/?utm_source=mcp"
 
 
 async def test_check_ip_falls_back_to_site_on_404() -> None:

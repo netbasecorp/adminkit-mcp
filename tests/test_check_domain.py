@@ -16,7 +16,7 @@ async def test_check_domain_not_available_when_all_sub_checks_are_501() -> None:
     finally:
         await client.aclose()
     assert result.status == "not_available"
-    assert result.report_url == "https://adminkit.net/tools/whois/"
+    assert result.report_url == "https://adminkit.net/tools/whois/?utm_source=mcp"
 
 
 async def test_check_domain_aggregates_available_sub_checks() -> None:

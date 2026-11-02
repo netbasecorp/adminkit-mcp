@@ -31,4 +31,4 @@ async def check_owned_ports(client: AdminKitClient, target: str) -> ToolResponse
             "check tool page.",
             report_url=PORT_CHECK_PAGE,
         )
-    return map_check_result(TOOL, resp.json())
+    return map_check_result(TOOL, resp.json(), fallback_report_url=PORT_CHECK_PAGE)

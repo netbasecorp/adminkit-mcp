@@ -28,7 +28,7 @@ async def dns_lookup(client: AdminKitClient, name: str, type: str = "A") -> Tool
         )
     except ApiUnavailable:
         return await _from_site(client, name, record_type)
-    return map_check_result(TOOL, resp.json())
+    return map_check_result(TOOL, resp.json(), fallback_report_url=DNS_LOOKUP_PAGE)
 
 
 async def _from_site(client: AdminKitClient, name: str, record_type: str) -> ToolResponse:

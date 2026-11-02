@@ -33,7 +33,7 @@ async def check_ip(client: AdminKitClient, ip: str | None = None) -> ToolRespons
         resp = await client.call_api("GET", "/v1/check/my-ip")
     except ApiUnavailable:
         return await _from_site(client)
-    return map_check_result(TOOL, resp.json())
+    return map_check_result(TOOL, resp.json(), fallback_report_url=MY_IP_PAGE)
 
 
 async def _from_site(client: AdminKitClient) -> ToolResponse:

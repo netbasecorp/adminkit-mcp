@@ -29,7 +29,7 @@ async def test_user_agent_tool() -> None:
     assert result.status == "ok"
     assert result.result["browser_family"] == "Chrome"
     assert result.result["os_family"] == "Windows"
-    assert result.report_url == "https://adminkit.net/tools/user-agent/"
+    assert result.report_url == "https://adminkit.net/tools/user-agent/?utm_source=mcp"
 
 
 async def test_user_agent_tool_unmatched_ua_is_honest_null() -> None:

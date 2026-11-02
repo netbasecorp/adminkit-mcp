@@ -27,7 +27,7 @@ async def test_ipv6_info_tool() -> None:
     assert result.status == "ok"
     assert result.result["network_64"] == "2001:db8::/64"
     assert result.result["embedded_ipv4"] is None
-    assert result.report_url == "https://adminkit.net/tools/"
+    assert result.report_url == "https://adminkit.net/tools/?utm_source=mcp"
 
 
 async def test_ipv6_info_tool_surfaces_embedded_ipv4() -> None:

@@ -19,7 +19,7 @@ MCP_CHECK_PAGE = "https://adminkit.net/tools/mcp-check/"
 async def check_mcp_endpoint(client: AdminKitClient, url: str, allow_private: bool = False) -> ToolResponse:
     try:
         resp = await client.call_api("POST", "/v1/check/mcp-endpoint", json={"target": url, "options": {}})
-        return map_check_result(TOOL, resp.json())
+        return map_check_result(TOOL, resp.json(), fallback_report_url=MCP_CHECK_PAGE)
     except ApiUnavailable:
         pass
 
