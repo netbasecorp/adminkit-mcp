@@ -16,6 +16,21 @@ from adminkit_mcp.tools._common import map_check_result
 
 TOOL = "check_mail_auth"
 MAIL_AUTH_PAGE = "https://adminkit.net/tools/spf-check/"
+_DMARC_POLICIES = frozenset({"none", "quarantine", "reject"})
+
+
+def _dmarc_policy(dmarc: dict[str, Any]) -> str | None:
+    """Policy in effect from an /api/mailauth DMARC result.
+
+    Uses the ``policy`` field (RFC 9989 §4.10.1: a missing ``p`` with a valid ``rua`` is ``none``;
+    ``null`` means no valid policy). Falls back to ``tags.p`` only when ``policy`` is absent (a site
+    deployment older than that field).
+    """
+    policy = dmarc["policy"] if "policy" in dmarc else (dmarc.get("tags") or {}).get("p")
+    if not isinstance(policy, str):
+        return None
+    policy = policy.lower()
+    return policy if policy in _DMARC_POLICIES else None
 
 
 async def check_mail_auth(client: AdminKitClient, domain: str) -> ToolResponse:
@@ -33,11 +48,14 @@ async def _from_site(client: AdminKitClient, domain: str) -> ToolResponse:
     dmarc = dmarc_resp.json()
 
     findings = list(spf.get("findings", [])) + list(dmarc.get("findings", []))
+    dmarc_found = dmarc.get("status") == "ok"
+    dmarc_policy = _dmarc_policy(dmarc) if dmarc_found else None
     problems = [
         spf.get("status") != "ok",
-        dmarc.get("status") != "ok",
+        not dmarc_found,
         spf.get("allMechanism") == "+all",
-        dmarc.get("tags", {}).get("p") == "none",
+        dmarc_found and dmarc_policy is None,
+        dmarc_policy == "none",
     ]
     status: ToolStatus = "warn" if any(problems) else "ok"
 
@@ -45,13 +63,20 @@ async def _from_site(client: AdminKitClient, domain: str) -> ToolResponse:
     fix_hint = None
     if spf.get("status") != "ok":
         fix_hint = "Publish an SPF (v=spf1) TXT record for this domain."
-    elif dmarc.get("status") != "ok":
-        fix_hint = "Publish a DMARC (_dmarc TXT) record for this domain."
+    elif not dmarc_found:
+        fix_hint = (
+            "Publish a DMARC (_dmarc TXT) record for this domain, starting with p=none and a rua you read."
+        )
     elif spf.get("allMechanism") == "+all":
         fix_hint = (
             "Replace +all in the SPF record with -all or ~all; +all allows anyone to send as this domain."
         )
-    elif dmarc.get("tags", {}).get("p") == "none":
+    elif dmarc_policy is None:
+        fix_hint = (
+            "The DMARC record has no valid policy, so receivers apply no DMARC processing; "
+            "add p=none (monitoring) with a rua you read."
+        )
+    elif dmarc_policy == "none":
         fix_hint = (
             "DMARC is monitoring-only (p=none); move to p=quarantine or p=reject once reports look clean."
         )
@@ -63,6 +88,7 @@ async def _from_site(client: AdminKitClient, domain: str) -> ToolResponse:
             "domain": domain,
             "spf_status": spf.get("status"),
             "dmarc_status": dmarc.get("status"),
+            "dmarc_policy": dmarc_policy,
             "findings": findings,
         },
         evidence=evidence,
