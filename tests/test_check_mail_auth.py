@@ -95,7 +95,7 @@ async def test_check_mail_auth_flags_permissive_spf() -> None:
         result = await check_mail_auth(client, "example.com")
     finally:
         await client.aclose()
-    assert result.status == "warn"
+    assert result.status == "fail"  # spf.py: +all is FAIL (critical)
     assert result.fix_hint is not None and "+all" in result.fix_hint
 
 
@@ -174,3 +174,75 @@ async def test_check_mail_auth_missing_dmarc_suggests_p_none() -> None:
     result = await _run_with_dmarc(dmarc_payload(domain="example.com", status="not-found"))
     assert result.status == "warn"
     assert result.fix_hint is not None and "p=none" in result.fix_hint
+
+
+async def _run_with_spf(spf: dict[str, Any]) -> ToolResponse:
+    api = all_not_implemented_api()
+    site = make_client(
+        {
+            ("GET", "/api/mailauth"): lambda request: json_handler(
+                200, spf if request.url.params.get("kind") == "spf" else dmarc_payload(domain="example.com")
+            )(request)
+        },
+        base_url="https://adminkit.net",
+    )
+    client = AdminKitClient(api, site)
+    try:
+        return await check_mail_auth(client, "example.com")
+    finally:
+        await client.aclose()
+
+
+def _site_spf(record: str, **extra: Any) -> dict[str, Any]:
+    # Shape of /api/mailauth?kind=spf (site/functions/api/mailauth.ts SpfResult).
+    return {
+        "domain": "example.com",
+        "status": "ok",
+        "record": record,
+        "lookupCount": 1,
+        "lookupLimitExceeded": False,
+        "allMechanism": "-all",
+        "mechanisms": record.split()[1:],
+        "findings": [],
+        "voidLookupCount": 0,
+        "permerror": False,
+        **extra,
+    }
+
+
+async def test_check_mail_auth_spf_permerror_fails() -> None:
+    # e.g. an include target without an SPF record: spf.py returns FAIL (spf.include_error).
+    spf = _site_spf("v=spf1 include:gone.example.net -all", permerror=True, allMechanism=None)
+    result = await _run_with_spf(spf)
+    assert result.status == "fail"
+    assert result.result["spf_permerror"] is True
+    assert result.result["spf_all"] is None
+    assert result.fix_hint is not None and "permerror" in result.fix_hint
+
+
+async def test_check_mail_auth_spf_lookup_limit_fails_on_old_deployment() -> None:
+    # Site deployment without "permerror": lookupLimitExceeded alone is a permerror (spf.too_many_lookups).
+    spf = _site_spf("v=spf1 include:a.example.net -all", lookupCount=11, lookupLimitExceeded=True)
+    del spf["permerror"]
+    result = await _run_with_spf(spf)
+    assert result.status == "fail"
+    assert result.result["spf_permerror"] is True
+
+
+async def test_check_mail_auth_spf_multiple_records_fails_with_merge_hint() -> None:
+    spf = {**_site_spf("v=spf1 -all", status="multiple-records", allMechanism=None), "record": None}
+    result = await _run_with_spf(spf)
+    assert result.status == "fail"
+    assert result.fix_hint is not None and "Merge" in result.fix_hint
+
+
+async def test_check_mail_auth_spf_softfail_neutral_and_missing_all_warn() -> None:
+    # spf.py: ~all is WARN (low), ?all and no all are WARN (medium); only -all is clean.
+    for all_mechanism, hint in (("~all", "change ~all to -all"), ("?all", "neutral"), (None, "neutral")):
+        result = await _run_with_spf(_site_spf("v=spf1 mx", allMechanism=all_mechanism))
+        assert result.status == "warn", all_mechanism
+        assert result.result["spf_all"] == all_mechanism
+        assert result.fix_hint is not None and hint in result.fix_hint, all_mechanism
+    result = await _run_with_spf(_site_spf("v=spf1 mx -all"))
+    assert result.status == "ok"
+    assert result.fix_hint is None

@@ -33,6 +33,17 @@ def _dmarc_policy(dmarc: dict[str, Any]) -> str | None:
     return policy if policy in _DMARC_POLICIES else None
 
 
+def _spf_permerror(spf: dict[str, Any]) -> bool:
+    """Whether an /api/mailauth SPF result is a permanent error (RFC 7208), as spf.py's FAIL.
+
+    Reads ``permerror`` (lookup/void-lookup limits, syntax errors, broken include/redirect targets,
+    loops); falls back to ``lookupLimitExceeded`` for a site deployment older than that field.
+    """
+    if "permerror" in spf:
+        return spf["permerror"] is True
+    return spf.get("lookupLimitExceeded") is True
+
+
 async def check_mail_auth(client: AdminKitClient, domain: str) -> ToolResponse:
     try:
         resp = await client.call_api("POST", "/v1/check/mail", json={"target": domain, "options": {}})
@@ -48,26 +59,45 @@ async def _from_site(client: AdminKitClient, domain: str) -> ToolResponse:
     dmarc = dmarc_resp.json()
 
     findings = list(spf.get("findings", [])) + list(dmarc.get("findings", []))
+    spf_status = spf.get("status")
+    spf_found = spf_status == "ok"
+    spf_permerror = spf_found and _spf_permerror(spf)
+    # The effective "all" only means something when the walk finished without a permerror.
+    spf_all = spf.get("allMechanism") if spf_found and not spf_permerror else None
     dmarc_found = dmarc.get("status") == "ok"
     dmarc_policy = _dmarc_policy(dmarc) if dmarc_found else None
+    # Same verdict as checks/.../mail/spf.py: more than one record, a permerror or "+all" fail; only
+    # "-all" is clean, while "~all" (low), "?all" and no "all" (medium) are warnings.
+    failures = [spf_status == "multiple-records", spf_permerror, spf_all == "+all"]
     problems = [
-        spf.get("status") != "ok",
+        not spf_found,
+        spf_permerror,
         not dmarc_found,
-        spf.get("allMechanism") == "+all",
+        spf_found and not spf_permerror and spf_all != "-all",
         dmarc_found and dmarc_policy is None,
         dmarc_policy == "none",
     ]
-    status: ToolStatus = "warn" if any(problems) else "ok"
+    status: ToolStatus = "fail" if any(failures) else "warn" if any(problems) else "ok"
 
     evidence: dict[str, Any] = {"spf": spf, "dmarc": dmarc}
     fix_hint = None
-    if spf.get("status") != "ok":
+    if spf_status == "multiple-records":
+        fix_hint = (
+            "Merge the domain's SPF records into a single v=spf1 TXT record; "
+            "more than one is a permanent error (RFC 7208 §4.5)."
+        )
+    elif not spf_found:
         fix_hint = "Publish an SPF (v=spf1) TXT record for this domain."
+    elif spf_permerror:
+        fix_hint = (
+            "The SPF record is a permanent error (permerror) for receivers: fix the problem in the findings "
+            "(over 10 DNS lookups, over 2 void lookups, a syntax error, or a broken include/redirect)."
+        )
     elif not dmarc_found:
         fix_hint = (
             "Publish a DMARC (_dmarc TXT) record for this domain, starting with p=none and a rua you read."
         )
-    elif spf.get("allMechanism") == "+all":
+    elif spf_all == "+all":
         fix_hint = (
             "Replace +all in the SPF record with -all or ~all; +all allows anyone to send as this domain."
         )
@@ -80,13 +110,22 @@ async def _from_site(client: AdminKitClient, domain: str) -> ToolResponse:
         fix_hint = (
             "DMARC is monitoring-only (p=none); move to p=quarantine or p=reject once reports look clean."
         )
+    elif spf_all in ("?all", None):
+        fix_hint = (
+            "The SPF record has no terminating all (or ends in ?all), so unlisted senders get a neutral "
+            "result; end it with ~all while testing, then -all."
+        )
+    elif spf_all == "~all":
+        fix_hint = "Once all legitimate senders are listed in SPF, change ~all to -all."
 
     return ToolResponse(
         tool=TOOL,
         status=status,
         result={
             "domain": domain,
-            "spf_status": spf.get("status"),
+            "spf_status": spf_status,
+            "spf_all": spf_all,
+            "spf_permerror": spf_permerror,
             "dmarc_status": dmarc.get("status"),
             "dmarc_policy": dmarc_policy,
             "findings": findings,

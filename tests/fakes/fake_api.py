@@ -123,6 +123,8 @@ def spf_payload(*, domain: str, status: str = "ok", all_mechanism: str | None = 
         "allMechanism": all_mechanism,
         "mechanisms": [],
         "findings": [f"SPF status: {status}"],
+        "voidLookupCount": 0,
+        "permerror": False,
     }
 
 
