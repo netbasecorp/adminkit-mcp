@@ -64,6 +64,12 @@ class AdminKitClient:
         )
         return cls(api_client, site_client, rate_limiter=rate_limiter)
 
+    @property
+    def has_api_key(self) -> bool:
+        """Whether an `X-API-Key` is attached to API calls (never exposes the key itself), so
+        keyed tools can refuse up front instead of sending an anonymous request."""
+        return bool(self._api_client.headers.get(API_KEY_HEADER))
+
     async def __aenter__(self) -> Self:
         return self
 

@@ -2,6 +2,8 @@
 5 "offline utility" tools (spec section 18.1/18.7) wrapping the no-auth `/v1/tools/*`
 endpoints (subnet/IP/MAC/UA math) — grouped separately below since they are a reversible
 enhancement on top of the original 8, not part of the named spec section 18.8 list.
+`list_assets` is a read-only, API-key-only view of the caller's own monitored assets
+(L0 monitoring), also outside the 18.8 list.
 
 Each tool function is a thin wrapper that unpacks arguments, calls into
 `adminkit_mcp.tools.*` with the shared `AdminKitClient`, and returns a plain dict (the
@@ -32,6 +34,7 @@ from adminkit_mcp.tools.explain_report import explain_report as _explain_report
 from adminkit_mcp.tools.get_radar import get_radar as _get_radar
 from adminkit_mcp.tools.ip_info import ip_info as _ip_info
 from adminkit_mcp.tools.ipv6_info import ipv6_info as _ipv6_info
+from adminkit_mcp.tools.list_assets import list_assets as _list_assets
 from adminkit_mcp.tools.mac_vendor import mac_vendor as _mac_vendor
 from adminkit_mcp.tools.subnet_calc import subnet_calc as _subnet_calc
 from adminkit_mcp.tools.user_agent import user_agent as _user_agent
@@ -122,6 +125,17 @@ def build_server(client: AdminKitClient, *, settings: Settings | None = None) ->
                 return refused.to_dict()
             allow_private = False
         return (await _check_mcp_endpoint(client, url, allow_private)).to_dict()
+
+    # --- Account (read-only, needs ADMINKIT_API_KEY): the caller's own monitored assets.
+
+    @mcp.tool()
+    async def list_assets() -> dict[str, Any]:
+        """Read-only: list your own AdminKit assets (GET /v1/assets) with each one's kind,
+        value, verified flag, last_checked_at, and stored monitored status (passing, reason,
+        checked_at; null = not checked yet), to see which assets are failing. Requires an
+        AdminKit API key (ADMINKIT_API_KEY); without one it returns an "API key required"
+        result and sends no request. Never creates, verifies, checks, or deletes anything."""
+        return (await _list_assets(client)).to_dict()
 
     # --- Offline utilities (spec section 18.1/18.7): pure math over /v1/tools/*, no
     # third-party host contacted. A reversible enhancement on top of the 8 tools above.

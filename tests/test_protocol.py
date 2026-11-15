@@ -1,6 +1,6 @@
 """In-process MCP protocol test: the server lists all 8 spec section 18.8 tools plus the 5
-offline utility tools with valid JSON schemas, and a tool call round-trips through the real
-FastMCP machinery."""
+offline utility tools and the read-only `list_assets` account tool with valid JSON schemas,
+and a tool call round-trips through the real FastMCP machinery."""
 
 from __future__ import annotations
 
@@ -35,7 +35,9 @@ OFFLINE_UTILITY_TOOLS = {
     "user_agent",
 }
 
-EXPECTED_TOOLS = ORIGINAL_8_TOOLS | OFFLINE_UTILITY_TOOLS
+ACCOUNT_TOOLS = {"list_assets"}
+
+EXPECTED_TOOLS = ORIGINAL_8_TOOLS | OFFLINE_UTILITY_TOOLS | ACCOUNT_TOOLS
 
 
 async def _build_test_server() -> tuple[AdminKitClient, FastMCP]:
@@ -45,7 +47,7 @@ async def _build_test_server() -> tuple[AdminKitClient, FastMCP]:
     return client, build_server(client)
 
 
-async def test_server_lists_exactly_the_13_tools() -> None:
+async def test_server_lists_exactly_the_14_tools() -> None:
     client, mcp = await _build_test_server()
     try:
         tools = await mcp.list_tools()

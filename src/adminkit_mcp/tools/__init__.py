@@ -8,6 +8,9 @@ Plus 5 "offline utility" tools (spec section 18.1/18.7 — `subnet_calc`, `ip_in
 `/v1/tools/*` endpoints, which do pure local computation (ipaddress math, bundled OUI/UA
 data) with no third-party host ever contacted and no site-function fallback. These are an
 explicit, reversible enhancement on top of the original 8 and are kept in their own
-modules so they can be dropped without touching the check tools."""
+modules so they can be dropped without touching the check tools.
+
+Plus `list_assets`: a read-only, API-key-only view of the caller's own assets and their
+stored monitored status (`GET /v1/assets`)."""
 
 from __future__ import annotations

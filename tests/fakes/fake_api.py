@@ -25,11 +25,12 @@ def make_client(routes: dict[Route, Handler], *, base_url: str) -> httpx.AsyncCl
 
 
 def make_recording_client(
-    calls: list[str], routes: dict[Route, Handler], *, base_url: str
+    calls: list[str], routes: dict[Route, Handler], *, base_url: str, headers: dict[str, str] | None = None
 ) -> httpx.AsyncClient:
     """Like `make_client`, but appends `"METHOD /path"` to `calls` for every request seen --
     lets a test assert both which routes were hit and in what order, and that a phantom route
-    was never requested at all."""
+    was never requested at all. `headers` become the client's default headers (e.g. a fake
+    `X-API-Key`, as `AdminKitClient.from_settings` would attach a configured key)."""
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append(f"{request.method} {request.url.path}")
@@ -38,7 +39,7 @@ def make_recording_client(
             return httpx.Response(404, json={"type": "about:blank", "title": "Not Found", "status": 404})
         return route_handler(request)
 
-    return httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url=base_url)
+    return httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url=base_url, headers=headers)
 
 
 def json_handler(status: int, body: dict[str, Any]) -> Handler:
@@ -269,3 +270,33 @@ def user_agent_payload(
         "device_model": None,
         "is_bot": is_bot,
     }
+
+
+def asset_payload(
+    *,
+    asset_id: str = "ast_01HFAKE0000000000000000001",
+    kind: str = "domain",
+    value: str = "example.com",
+    verified: bool = True,
+    last_checked_at: str | None = None,
+    status: dict[str, Any] | None = None,
+    include_status_fields: bool = True,
+) -> dict[str, Any]:
+    """Synthetic `AssetResponse` (`platform/openapi.stub.yaml`). `include_status_fields=False`
+    drops `last_checked_at`/`status` entirely, like an API from before they were added."""
+    body: dict[str, Any] = {
+        "id": asset_id,
+        "kind": kind,
+        "value": value,
+        "state": "verified" if verified else "unverified",
+        "verified": verified,
+        "verification_method": "dns_txt" if verified else None,
+        "verification_token": "adminkit-verify-FAKE-TOKEN-NOT-A-SECRET",
+        "verification_methods": ["dns_txt", "file"],
+        "verification_host": value,
+        "created_at": "2026-11-01T00:00:00Z",
+    }
+    if include_status_fields:
+        body["last_checked_at"] = last_checked_at
+        body["status"] = status
+    return body
