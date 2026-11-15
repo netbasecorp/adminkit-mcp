@@ -10,7 +10,7 @@ data) with no third-party host ever contacted and no site-function fallback. The
 explicit, reversible enhancement on top of the original 8 and are kept in their own
 modules so they can be dropped without touching the check tools.
 
-Plus `list_assets`: a read-only, API-key-only view of the caller's own assets and their
-stored monitored status (`GET /v1/assets`)."""
+Plus `list_assets` and `get_asset`: read-only, API-key-only views of the caller's own assets
+and their stored monitored status (`GET /v1/assets`, `GET /v1/assets/{asset_id}`)."""
 
 from __future__ import annotations

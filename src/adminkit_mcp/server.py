@@ -2,8 +2,8 @@
 5 "offline utility" tools (spec section 18.1/18.7) wrapping the no-auth `/v1/tools/*`
 endpoints (subnet/IP/MAC/UA math) — grouped separately below since they are a reversible
 enhancement on top of the original 8, not part of the named spec section 18.8 list.
-`list_assets` is a read-only, API-key-only view of the caller's own monitored assets
-(L0 monitoring), also outside the 18.8 list.
+`list_assets` and `get_asset` are read-only, API-key-only views of the caller's own
+monitored assets (L0 monitoring), also outside the 18.8 list.
 
 Each tool function is a thin wrapper that unpacks arguments, calls into
 `adminkit_mcp.tools.*` with the shared `AdminKitClient`, and returns a plain dict (the
@@ -31,6 +31,7 @@ from adminkit_mcp.tools.check_owned_ports import check_owned_ports as _check_own
 from adminkit_mcp.tools.dns_lookup import DNS_LOOKUP_PAGE
 from adminkit_mcp.tools.dns_lookup import dns_lookup as _dns_lookup
 from adminkit_mcp.tools.explain_report import explain_report as _explain_report
+from adminkit_mcp.tools.get_asset import get_asset as _get_asset
 from adminkit_mcp.tools.get_radar import get_radar as _get_radar
 from adminkit_mcp.tools.ip_info import ip_info as _ip_info
 from adminkit_mcp.tools.ipv6_info import ipv6_info as _ipv6_info
@@ -136,6 +137,16 @@ def build_server(client: AdminKitClient, *, settings: Settings | None = None) ->
         AdminKit API key (ADMINKIT_API_KEY); without one it returns an "API key required"
         result and sends no request. Never creates, verifies, checks, or deletes anything."""
         return (await _list_assets(client)).to_dict()
+
+    @mcp.tool()
+    async def get_asset(asset_id: str) -> dict[str, Any]:
+        """Read-only: get ONE of your own AdminKit assets by id (GET /v1/assets/{asset_id},
+        ids as returned by list_assets) with its kind, value, verified flag, last_checked_at,
+        and stored monitored status (passing, reason, checked_at; null = not checked yet).
+        Requires an AdminKit API key (ADMINKIT_API_KEY); without one it returns an "API key
+        required" result and sends no request. An unknown id and another organization's id
+        both return "asset not found". Never creates, verifies, checks, or deletes anything."""
+        return (await _get_asset(client, asset_id)).to_dict()
 
     # --- Offline utilities (spec section 18.1/18.7): pure math over /v1/tools/*, no
     # third-party host contacted. A reversible enhancement on top of the 8 tools above.
