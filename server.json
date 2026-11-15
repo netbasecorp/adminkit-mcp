@@ -8,18 +8,18 @@
     "url": "https://github.com/netbasecorp/adminkit-mcp",
     "source": "github"
   },
-  "version": "0.1.0",
+  "version": "0.2.0",
   "packages": [
     {
       "registryType": "pypi",
       "registryBaseUrl": "https://pypi.org",
       "identifier": "adminkit-mcp",
-      "version": "0.1.0",
+      "version": "0.2.0",
       "transport": { "type": "stdio" },
       "environmentVariables": [
         {
           "name": "ADMINKIT_API_KEY",
-          "description": "Optional AdminKit API key (explain_report, higher limits)",
+          "description": "Optional AdminKit API key (explain_report, read-only list_assets and get_asset, higher limits)",
           "isRequired": false,
           "isSecret": true
         }

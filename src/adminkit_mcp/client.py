@@ -11,11 +11,12 @@ from typing import Any, Self
 
 import httpx
 
+from adminkit_mcp import __version__
 from adminkit_mcp.config import Settings
 from adminkit_mcp.ratelimit import RateLimiter
 
 API_KEY_HEADER = "X-API-Key"
-USER_AGENT = "adminkit-mcp/0.1.0"
+USER_AGENT = f"adminkit-mcp/{__version__}"
 
 
 class ApiUnavailable(Exception):

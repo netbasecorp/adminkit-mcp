@@ -21,6 +21,7 @@ from urllib.parse import urljoin, urlsplit
 
 import httpx
 
+from adminkit_mcp import __version__
 from adminkit_mcp.probe.sse import iter_sse_events
 from adminkit_mcp.probe.targets import PrivateTargetError, check_target_allowed
 
@@ -28,7 +29,7 @@ ProbeStatus = Literal["ok", "warn", "fail", "error", "skipped"]
 Severity = Literal["info", "low", "medium", "high", "critical"]
 
 _PROTOCOL_VERSION = "2025-06-18"
-_CLIENT_INFO = {"name": "adminkit-mcp-probe", "version": "0.1.0"}
+_CLIENT_INFO = {"name": "adminkit-mcp-probe", "version": __version__}
 _INITIALIZE_PARAMS: dict[str, Any] = {
     "protocolVersion": _PROTOCOL_VERSION,
     "capabilities": {},
