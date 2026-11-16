@@ -16,6 +16,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
+from adminkit_mcp import __version__
 from adminkit_mcp.client import AdminKitClient
 from adminkit_mcp.config import Settings
 from adminkit_mcp.hosted import refuse_private_target
@@ -56,6 +57,13 @@ def build_server(client: AdminKitClient, *, settings: Settings | None = None) ->
             "report_url to the corresponding public page. See https://adminkit.net."
         ),
     )
+    # `initialize` reports serverInfo.version from the lowlevel server's `version`, falling
+    # back to the installed `mcp` SDK version when unset. FastMCP takes no `version` argument
+    # anywhere in `mcp>=1.2,<2`, but every release in that range builds `self._mcp_server`
+    # (lowlevel `Server`, which stores `self.version`) and reads it in
+    # `create_initialization_options`: `server_version=self.version if self.version else
+    # pkg_version("mcp")` (mcp 1.2.0 lowlevel/server.py:137, mcp 1.30.0 :183).
+    mcp._mcp_server.version = __version__
 
     @mcp.tool()
     async def check_ip(ip: str | None = None) -> dict[str, Any]:

@@ -15,6 +15,7 @@ from typing import Any, cast
 import httpx
 import pytest
 
+import adminkit_mcp
 from adminkit_mcp.client import AdminKitClient
 from adminkit_mcp.config import Settings, for_hosted_http
 from adminkit_mcp.hosted import build_hosted_http_app
@@ -89,6 +90,7 @@ async def test_initialize_succeeds_over_hosted_http() -> None:
     assert resp.text.startswith("event: message")
     payload = json.loads(resp.text.split("data:", 1)[1].strip())
     assert payload["result"]["serverInfo"]["name"] == "adminkit"
+    assert payload["result"]["serverInfo"]["version"] == adminkit_mcp.__version__
 
 
 async def test_exceeding_rate_limit_returns_429() -> None:

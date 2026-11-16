@@ -5,7 +5,9 @@ and a tool call round-trips through the real FastMCP machinery."""
 from __future__ import annotations
 
 from mcp.server.fastmcp import FastMCP
+from mcp.shared.memory import create_connected_server_and_client_session
 
+import adminkit_mcp
 from adminkit_mcp.client import AdminKitClient
 from adminkit_mcp.server import build_server
 from fakes.fake_api import (
@@ -54,6 +56,19 @@ async def test_server_lists_exactly_the_15_tools() -> None:
     finally:
         await client.aclose()
     assert {t.name for t in tools} == EXPECTED_TOOLS
+
+
+async def test_initialize_reports_adminkit_name_and_package_version() -> None:
+    """serverInfo.version must be adminkit-mcp's own version, not the installed `mcp` SDK's
+    (the SDK's fallback when the server sets none). /developers/mcp/ documents it."""
+    client, mcp = await _build_test_server()
+    try:
+        async with create_connected_server_and_client_session(mcp._mcp_server) as session:
+            result = await session.initialize()
+    finally:
+        await client.aclose()
+    assert result.serverInfo.name == "adminkit"
+    assert result.serverInfo.version == adminkit_mcp.__version__
 
 
 async def test_original_8_tools_still_registered_alongside_offline_utilities() -> None:
