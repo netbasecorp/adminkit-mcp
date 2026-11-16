@@ -136,7 +136,7 @@ Scan only endpoints you own or are authorised to test.
 ```bash
 pip install -e ".[dev]"
 pytest            # every test runs against local fakes on 127.0.0.1, no network
-ruff check . && mypy
+ruff check . && ruff format --check . && mypy
 bash action/test/test_action.sh
 ```
 

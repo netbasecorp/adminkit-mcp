@@ -18,6 +18,7 @@ jobs:
           python-version: "3.12"
       - run: pip install -e ".[dev]"
       - run: ruff check .
+      - run: ruff format --check .
       - run: mypy
       - run: pytest -q
       - run: bash action/test/test_action.sh

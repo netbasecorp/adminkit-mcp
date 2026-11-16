@@ -32,6 +32,8 @@
   permerror and `+all` as fail, and `~all`, `?all` and a missing `all` as warn, with a hint to
   merge multiple SPF records.
 - The HTTP `User-Agent` and the probe's MCP `clientInfo.version` follow the package version.
+- Minimum `mcp` SDK raised from 1.2 to 1.29 (`mcp>=1.29,<2`). Older releases either fail to import
+  with current pydantic or lack the `max_request_body_size` setting used by `--http`.
 
 ### Fixed
 
