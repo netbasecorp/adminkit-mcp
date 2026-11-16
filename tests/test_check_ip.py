@@ -74,4 +74,3 @@ async def test_check_ip_with_explicit_ip_is_not_available() -> None:
         await client.aclose()
     assert result.status == "not_available"
     assert "198.51.100.7" not in result.result["message"]  # never echoes an unsupported lookup as if done
-

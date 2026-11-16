@@ -62,7 +62,9 @@ async def test_get_radar_uses_live_api_when_available() -> None:
         "points": [{"date": "2026-10-01T00:00:00Z", "count": 3}],
         "generated_at": "2026-10-22T00:00:00Z",
     }
-    api = make_client({("GET", "/v1/radar/mcp/trends"): json_handler(200, payload)}, base_url="https://api.adminkit.net")
+    api = make_client(
+        {("GET", "/v1/radar/mcp/trends"): json_handler(200, payload)}, base_url="https://api.adminkit.net"
+    )
     site = all_not_implemented_api(base_url="https://adminkit.net")
     client = AdminKitClient(api, site)
     try:

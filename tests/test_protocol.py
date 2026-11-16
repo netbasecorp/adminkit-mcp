@@ -113,7 +113,8 @@ async def test_check_ip_tool_call_round_trips_through_fastmcp() -> None:
 
 async def test_subnet_calc_tool_call_round_trips_through_fastmcp() -> None:
     api = make_client(
-        {("GET", "/v1/tools/subnet"): json_handler(200, subnet_payload())}, base_url="https://api.adminkit.net"
+        {("GET", "/v1/tools/subnet"): json_handler(200, subnet_payload())},
+        base_url="https://api.adminkit.net",
     )
     site = all_not_implemented_api(base_url="https://adminkit.net")
     client = AdminKitClient(api, site)

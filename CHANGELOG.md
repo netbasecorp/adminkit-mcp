@@ -33,6 +33,11 @@
   merge multiple SPF records.
 - The HTTP `User-Agent` and the probe's MCP `clientInfo.version` follow the package version.
 
+### Fixed
+
+- `initialize` now reports `serverInfo.version` as the adminkit-mcp version. Before, it reported the
+  installed `mcp` SDK version.
+
 ## 0.1.0 - 2026-11-01
 
 - First public release: 8 AdminKit check tools, 5 offline utility tools, stdio and streamable

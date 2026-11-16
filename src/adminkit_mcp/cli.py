@@ -57,9 +57,7 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_arg_parser().parse_args(argv)
 
     if args.command == "probe":
-        return asyncio.run(
-            _run_probe(args.url, allow_private=args.probe_allow_private, timeout=args.timeout)
-        )
+        return asyncio.run(_run_probe(args.url, allow_private=args.probe_allow_private, timeout=args.timeout))
 
     settings = Settings.from_env()
     if args.allow_private:

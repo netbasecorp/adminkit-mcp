@@ -13,7 +13,9 @@ from fakes.fake_api import (
 
 async def test_dns_lookup_uses_live_api_when_available() -> None:
     payload = check_result_payload(check="dns.lookup", target="example.com")
-    api = make_client({("POST", "/v1/check/dns"): json_handler(200, payload)}, base_url="https://api.adminkit.net")
+    api = make_client(
+        {("POST", "/v1/check/dns"): json_handler(200, payload)}, base_url="https://api.adminkit.net"
+    )
     site = all_not_implemented_api(base_url="https://adminkit.net")
     client = AdminKitClient(api, site)
     try:

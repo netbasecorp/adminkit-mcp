@@ -60,9 +60,7 @@ class AdminKitClient:
             headers={"User-Agent": USER_AGENT},
             timeout=settings.timeout_seconds,
         )
-        rate_limiter = RateLimiter(
-            rate=settings.rate_limit_per_second, burst=settings.rate_limit_per_second
-        )
+        rate_limiter = RateLimiter(rate=settings.rate_limit_per_second, burst=settings.rate_limit_per_second)
         return cls(api_client, site_client, rate_limiter=rate_limiter)
 
     @property
