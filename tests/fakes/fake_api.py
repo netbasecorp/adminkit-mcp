@@ -281,9 +281,12 @@ def asset_payload(
     last_checked_at: str | None = None,
     status: dict[str, Any] | None = None,
     include_status_fields: bool = True,
+    value_valid: Any = None,
 ) -> dict[str, Any]:
     """Synthetic `AssetResponse` (`platform/openapi.stub.yaml`). `include_status_fields=False`
-    drops `last_checked_at`/`status` entirely, like an API from before they were added."""
+    drops `last_checked_at`/`status` entirely, like an API from before they were added.
+    `value_valid=None` omits that field (an API from before it was added); anything else is
+    sent as-is."""
     body: dict[str, Any] = {
         "id": asset_id,
         "kind": kind,
@@ -299,4 +302,6 @@ def asset_payload(
     if include_status_fields:
         body["last_checked_at"] = last_checked_at
         body["status"] = status
+    if value_valid is not None:
+        body["value_valid"] = value_valid
     return body

@@ -140,8 +140,10 @@ def build_server(client: AdminKitClient, *, settings: Settings | None = None) ->
     @mcp.tool()
     async def list_assets() -> dict[str, Any]:
         """Read-only: list your own AdminKit assets (GET /v1/assets) with each one's kind,
-        value, verified flag, last_checked_at, and stored monitored status (passing, reason,
-        checked_at; null = not checked yet), to see which assets are failing. Requires an
+        value, verified flag, value_valid (false = the stored value does not parse for its kind,
+        so remove the asset and add it again; true when the API omits it), last_checked_at, and
+        stored monitored status (passing, reason, checked_at; null = not checked yet), to see
+        which assets are failing or need re-adding. Requires an
         AdminKit API key (ADMINKIT_API_KEY); without one it returns an "API key required"
         result and sends no request. Never creates, verifies, checks, or deletes anything."""
         return (await _list_assets(client)).to_dict()
@@ -149,8 +151,9 @@ def build_server(client: AdminKitClient, *, settings: Settings | None = None) ->
     @mcp.tool()
     async def get_asset(asset_id: str) -> dict[str, Any]:
         """Read-only: get ONE of your own AdminKit assets by id (GET /v1/assets/{asset_id},
-        ids as returned by list_assets) with its kind, value, verified flag, last_checked_at,
-        and stored monitored status (passing, reason, checked_at; null = not checked yet).
+        ids as returned by list_assets) with its kind, value, verified flag, value_valid (false =
+        remove the asset and add it again), last_checked_at, and stored monitored status
+        (passing, reason, checked_at; null = not checked yet).
         Requires an AdminKit API key (ADMINKIT_API_KEY); without one it returns an "API key
         required" result and sends no request. An unknown id and another organization's id
         both return "asset not found". Never creates, verifies, checks, or deletes anything."""

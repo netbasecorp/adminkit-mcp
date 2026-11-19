@@ -95,6 +95,7 @@ async def test_sends_get_with_key_header_and_maps_passing_failing_and_unchecked(
         "kind": "domain",
         "value": "ok.example.com",
         "verified": True,
+        "value_valid": True,
         "last_checked_at": "2026-11-15T10:00:00Z",
         "status": PASSING,
     }
@@ -214,3 +215,64 @@ async def test_hosted_http_settings_never_carry_a_key_so_list_assets_refuses() -
         await hosted.aclose()
     assert out["status"] == "error"
     assert "API key" in out["result"]["message"]
+
+
+async def test_value_valid_false_is_reported_with_warn_and_readd_hint() -> None:
+    body = {
+        "assets": [
+            asset_payload(
+                asset_id="ast_ok", last_checked_at="2026-11-15T10:00:00Z", status=PASSING, value_valid=True
+            ),
+            asset_payload(asset_id="ast_legacy", value="https://example.com/", value_valid=False),
+        ]
+    }
+    out = await _run(_client([], json_handler(200, body)))
+    by_id = {a["id"]: a for a in out["result"]["assets"]}
+    assert by_id["ast_legacy"]["value_valid"] is False
+    assert by_id["ast_legacy"]["value"] == "https://example.com/"
+    assert by_id["ast_ok"]["value_valid"] is True
+    assert out["status"] == "warn"
+    assert out["result"]["failing"] == []
+    assert "1 with an invalid stored value" in out["result"]["summary"]
+    assert "ast_legacy" in out["result"]["summary"]
+    assert "add it again" in out["fix_hint"]
+    assert set(out["result"]) == {"summary", "count", "failing", "not_checked", "assets"}
+
+
+async def test_value_valid_absent_or_non_boolean_maps_to_true() -> None:
+    body = {
+        "assets": [
+            asset_payload(asset_id="ast_absent", last_checked_at="2026-11-15T10:00:00Z", status=PASSING),
+            asset_payload(
+                asset_id="ast_null", last_checked_at="2026-11-15T10:00:00Z", status=PASSING, value_valid="no"
+            ),
+        ]
+    }
+    assert "value_valid" not in body["assets"][0]
+    out = await _run(_client([], json_handler(200, body)))
+    assert [a["value_valid"] for a in out["result"]["assets"]] == [True, True]
+    assert out["status"] == "ok"
+    assert out["fix_hint"] is None
+    assert "invalid stored value" not in out["result"]["summary"]
+
+
+async def test_failing_and_invalid_value_combine_hints() -> None:
+    body = {
+        "assets": [
+            asset_payload(asset_id="ast_bad", last_checked_at="2026-11-15T10:05:00Z", status=FAILING),
+            asset_payload(asset_id="ast_legacy", value_valid=False),
+        ]
+    }
+    out = await _run(_client([], json_handler(200, body)))
+    assert out["status"] == "warn"
+    assert "failing asset" in out["fix_hint"]
+    assert "add it again" in out["fix_hint"]
+
+
+async def test_list_assets_description_documents_value_valid() -> None:
+    client = _client([], json_handler(200, {"assets": []}))
+    try:
+        tools = {t.name: t for t in await build_server(client).list_tools()}
+    finally:
+        await client.aclose()
+    assert "value_valid" in (tools["list_assets"].description or "")

@@ -2,10 +2,14 @@
 "API key required" refusal, the per-asset field mapping (`AssetResponse` in
 `platform/openapi.stub.yaml`), and the HTTP error mapping.
 
-Per asset only `id`, `kind`, `value`, `verified`, `last_checked_at`, and `status`
-(`{passing, reason, checked_at}`, or `None` = "not checked yet") are returned -- never the
-asset's `verification_token`. An older API without `last_checked_at`/`status`, or a
+Per asset only `id`, `kind`, `value`, `verified`, `value_valid`, `last_checked_at`, and
+`status` (`{passing, reason, checked_at}`, or `None` = "not checked yet") are returned -- never
+the asset's `verification_token`. An older API without `last_checked_at`/`status`, or a
 malformed `status` object, maps to `None` rather than a guess or a crash.
+
+`value_valid` is `False` only when the API says so: the stored value does not parse for its kind
+(a legacy row), so it cannot be verified or checked and must be removed and added again. An older
+API without the field maps to `True` (the contract default), as does any non-boolean value.
 """
 
 from __future__ import annotations
@@ -49,6 +53,7 @@ def map_asset(item: dict[str, Any]) -> dict[str, Any]:
         "kind": item.get("kind"),
         "value": item.get("value"),
         "verified": item.get("verified") is True,
+        "value_valid": item.get("value_valid") is not False,
         "last_checked_at": _str_or_none(item.get("last_checked_at")),
         "status": _map_status(item.get("status")),
     }
@@ -56,6 +61,16 @@ def map_asset(item: dict[str, Any]) -> dict[str, Any]:
 
 def is_failing(asset: dict[str, Any]) -> bool:
     return asset["status"] is not None and asset["status"]["passing"] is False
+
+
+def has_invalid_value(asset: dict[str, Any]) -> bool:
+    return asset["value_valid"] is False
+
+
+INVALID_VALUE_HINT = (
+    "Remove each asset with value_valid=false in your AdminKit account and add it again: its stored "
+    "value does not parse for its kind, so it cannot be verified or checked."
+)
 
 
 def _map_status(raw: Any) -> dict[str, Any] | None:

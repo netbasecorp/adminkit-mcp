@@ -9,7 +9,8 @@ id is refused without any request. The API answers 404 for an unknown id and for
 organization's id alike, and so does this tool. Nothing is created, verified, checked, or deleted.
 
 Returns the same per-asset fields as `list_assets` (`tools/_assets.py`), never the asset's
-`verification_token`.
+`verification_token`, including `value_valid` (`false` = remove and add the asset again; the
+result is then `warn`).
 """
 
 from __future__ import annotations
@@ -22,6 +23,8 @@ from adminkit_mcp.client import AdminKitClient, ApiUnavailable
 from adminkit_mcp.envelope import ToolResponse
 from adminkit_mcp.tools._assets import (
     ASSETS_PAGE,
+    INVALID_VALUE_HINT,
+    has_invalid_value,
     is_failing,
     key_required,
     map_asset,
@@ -92,18 +95,24 @@ async def get_asset(client: AdminKitClient, asset_id: str) -> ToolResponse:
 
     asset = map_asset(payload)
     failing = is_failing(asset)
+    invalid = has_invalid_value(asset)
     if asset["status"] is None:
         summary = f"Asset {asset['value']} ({asset['kind']}) has not been checked yet."
     elif failing:
         summary = f"Asset {asset['value']} ({asset['kind']}) is failing: {asset['status']['reason']}"
     else:
         summary = f"Asset {asset['value']} ({asset['kind']}) is passing."
+    if invalid:
+        summary += " Its stored value does not parse for its kind: remove this asset and add it again."
+    hints = []
+    if failing:
+        hints.append("Open this asset in your AdminKit account to see its latest check results.")
+    if invalid:
+        hints.append(INVALID_VALUE_HINT)
     return ToolResponse(
         tool=TOOL,
-        status="warn" if failing else "ok",
+        status="warn" if failing or invalid else "ok",
         result={"summary": summary, "asset": asset},
-        fix_hint="Open this asset in your AdminKit account to see its latest check results."
-        if failing
-        else None,
+        fix_hint=" ".join(hints) or None,
         report_url=ASSETS_PAGE,
     )

@@ -111,6 +111,7 @@ async def test_passing_status_sends_get_with_key_and_maps_fields() -> None:
         "kind": "domain",
         "value": "ok.example.com",
         "verified": True,
+        "value_valid": True,
         "last_checked_at": "2026-11-15T10:00:00Z",
         "status": PASSING,
     }
@@ -232,3 +233,45 @@ async def test_hosted_http_settings_never_carry_a_key_so_get_asset_refuses() -> 
         await hosted.aclose()
     assert out["status"] == "error"
     assert "API key" in out["result"]["message"]
+
+
+async def test_value_valid_false_is_reported_with_warn_and_readd_hint() -> None:
+    body = asset_payload(
+        value="https://example.com/",
+        last_checked_at="2026-11-15T10:00:00Z",
+        status=PASSING,
+        value_valid=False,
+    )
+    out = await _run(_client([], json_handler(200, body)))
+    asset = out["result"]["asset"]
+    assert asset["value_valid"] is False
+    assert asset["value"] == "https://example.com/"
+    assert out["status"] == "warn"
+    assert "remove this asset and add it again" in out["result"]["summary"]
+    assert "add it again" in out["fix_hint"]
+    assert set(out["result"]) == {"summary", "asset"}
+
+
+async def test_value_valid_absent_maps_to_true() -> None:
+    body = asset_payload(last_checked_at="2026-11-15T10:00:00Z", status=PASSING)
+    assert "value_valid" not in body
+    out = await _run(_client([], json_handler(200, body)))
+    assert out["result"]["asset"]["value_valid"] is True
+    assert out["status"] == "ok"
+    assert out["fix_hint"] is None
+
+
+async def test_value_valid_true_is_passed_through() -> None:
+    body = asset_payload(last_checked_at="2026-11-15T10:00:00Z", status=PASSING, value_valid=True)
+    out = await _run(_client([], json_handler(200, body)))
+    assert out["result"]["asset"]["value_valid"] is True
+    assert out["status"] == "ok"
+
+
+async def test_get_asset_description_documents_value_valid() -> None:
+    client = _client([], json_handler(200, asset_payload()))
+    try:
+        tools = {t.name: t for t in await build_server(client).list_tools()}
+    finally:
+        await client.aclose()
+    assert "value_valid" in (tools["get_asset"].description or "")
