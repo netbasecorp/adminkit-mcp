@@ -13,6 +13,10 @@
 - `get_asset(asset_id)`: the same fields for one asset (`GET /v1/assets/{asset_id}`). The id is
   validated locally and a malformed id is refused without a request; an unknown id and another
   organization's id both answer "asset not found in your organization".
+- `list_assets` / `get_asset`: each asset now includes `value_valid` (from the API's
+  `AssetResponse.value_valid`; `true` when an older API omits it). `false` means the stored
+  value does not parse for its kind (a legacy row) and the asset must be removed and added
+  again; the result is then `warn` with that hint.
 - Both new tools need an AdminKit API key (`ADMINKIT_API_KEY`). Without one they answer "API key
   required" and send no request. They never create, verify, check or delete anything, and never
   return an asset's `verification_token` or the API key.
