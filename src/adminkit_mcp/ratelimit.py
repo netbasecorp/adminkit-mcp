@@ -6,6 +6,7 @@ strangers' requests)."""
 from __future__ import annotations
 
 import asyncio
+import math
 import time
 
 
@@ -48,6 +49,14 @@ class RateLimiter:
             return True
         return False
 
+    def seconds_until_available(self) -> float:
+        """Seconds until one token is available (0.0 if one is available now). Read-only:
+        consumes nothing."""
+        self._refill()
+        if self._tokens >= 1.0:
+            return 0.0
+        return (1.0 - self._tokens) / self._rate
+
 
 class PerClientRateLimiter:
     """One independent `RateLimiter` token bucket per key (typically a client IP), so a
@@ -73,3 +82,11 @@ class PerClientRateLimiter:
             bucket = RateLimiter(self._rate, self._burst)
             self._buckets[key] = bucket
         return bucket.try_acquire()
+
+    def retry_after(self, key: str) -> int:
+        """Whole seconds (>= 1) until `key` may send another request, for an HTTP `Retry-After`
+        header on the 429 `allow` just answered. Rounded up so a client that waits exactly this
+        long is not refused again; an unknown key (bucket evicted meanwhile) gets the minimum 1."""
+        bucket = self._buckets.get(key)
+        wait = bucket.seconds_until_available() if bucket is not None else 0.0
+        return max(1, math.ceil(wait))

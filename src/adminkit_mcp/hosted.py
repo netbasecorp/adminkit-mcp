@@ -61,7 +61,8 @@ def _client_ip(scope: Scope) -> str:
 
 
 class ClientRateLimitMiddleware:
-    """Raw ASGI middleware: answers 429 once a client IP exceeds `limiter`'s budget, without
+    """Raw ASGI middleware: answers 429 once a client IP exceeds `limiter`'s budget (with a
+    `Retry-After` header in whole seconds, >= 1, from that client's token bucket), without
     touching the request body (so it never interferes with the size-cap middleware the MCP
     SDK already wires in via `max_request_body_size`)."""
 
@@ -73,10 +74,17 @@ class ClientRateLimitMiddleware:
         if scope["type"] != "http":
             await self._app(scope, receive, send)
             return
-        if not self._limiter.allow(_client_ip(scope)):
+        client_ip = _client_ip(scope)
+        if not self._limiter.allow(client_ip):
+            retry_after = self._limiter.retry_after(client_ip)
             response = JSONResponse(
-                {"error": "rate_limited", "detail": "Too many requests from this client; slow down."},
+                {
+                    "error": "rate_limited",
+                    "detail": "Too many requests from this client; slow down.",
+                    "retry_after_seconds": retry_after,
+                },
                 status_code=429,
+                headers={"Retry-After": str(retry_after)},
             )
             await response(scope, receive, send)
             return

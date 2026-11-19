@@ -18,7 +18,9 @@ from typing import Any
 
 import httpx
 
+from adminkit_mcp.client import retry_after_seconds
 from adminkit_mcp.envelope import ToolResponse
+from adminkit_mcp.tools._common import rate_limit_fix_hint, with_retry_wait
 
 ASSETS_PAGE = "https://adminkit.net/account/assets/"
 
@@ -98,8 +100,9 @@ def map_error(tool: str, response: httpx.Response, *, action: str) -> ToolRespon
         message = f"The AdminKit API rejected the configured API key (X-API-Key) for {action}."
         fix_hint: str | None = "Check that ADMINKIT_API_KEY is a valid, unrevoked key for your account."
     elif response.status_code == 429:
-        message = detail or "Rate limit reached for the assets API; retry later."
-        fix_hint = "Wait a moment and retry."
+        wait = retry_after_seconds(response)
+        message = with_retry_wait(detail or "Rate limit reached for the assets API; retry later.", wait)
+        fix_hint = rate_limit_fix_hint(wait)
     else:
         message = detail or f"{action[:1].upper()}{action[1:]} failed (HTTP {response.status_code})."
         fix_hint = None

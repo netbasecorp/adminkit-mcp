@@ -6,6 +6,9 @@ tool output.
 
 from __future__ import annotations
 
+import math
+from datetime import UTC, datetime
+from email.utils import parsedate_to_datetime
 from types import TracebackType
 from typing import Any, Self
 
@@ -27,6 +30,100 @@ class ApiUnavailable(Exception):
         super().__init__(f"AdminKit API returned {status_code}: {detail}")
         self.status_code = status_code
         self.detail = detail
+
+
+class ApiRateLimited(httpx.HTTPStatusError):
+    """Raised on HTTP 429 from the Check API or the fallback site. Subclasses
+    `httpx.HTTPStatusError`, so existing `except httpx.HTTPStatusError` handlers keep working.
+
+    `retry_after_seconds` is the wait the server announced (see `retry_after_seconds()` for the
+    precedence), or None when it did not say. The client never sleeps or retries on its own;
+    the caller decides whether to wait.
+    """
+
+    def __init__(self, response: httpx.Response) -> None:
+        self.retry_after_seconds = retry_after_seconds(response)
+        self.detail = problem_detail(response)
+        super().__init__(
+            rate_limited_message(self.retry_after_seconds), request=response.request, response=response
+        )
+
+    @property
+    def message(self) -> str:
+        return rate_limited_message(self.retry_after_seconds)
+
+
+def rate_limited_message(seconds: int | None) -> str:
+    """The text every tool uses for a 429: says it was rate limited and, when known, the wait."""
+    if seconds is None:
+        return "Rate limited by the AdminKit API (HTTP 429); no retry time was given, retry later."
+    return f"Rate limited by the AdminKit API (HTTP 429); retry in {seconds} s."
+
+
+def retry_after_seconds(response: httpx.Response, *, now: datetime | None = None) -> int | None:
+    """The wait a 429 response announces, in whole seconds, or None when it says nothing usable.
+
+    Precedence: `Retry-After` header (delta-seconds or an HTTP-date) -> problem body
+    `retry_after_seconds` -> `RateLimit-Reset` header (delta-seconds) -> None. Never invents a
+    wait: an unparsable value falls through to the next source.
+    """
+    header = _retry_after_header(response.headers.get("Retry-After"), now=now)
+    if header is not None:
+        return header
+    body = _body_retry_after(response)
+    if body is not None:
+        return body
+    return _delta_seconds(response.headers.get("RateLimit-Reset"))
+
+
+def _delta_seconds(raw: str | None) -> int | None:
+    if raw is None:
+        return None
+    value = raw.strip()
+    return int(value) if value.isascii() and value.isdigit() else None
+
+
+def _retry_after_header(raw: str | None, *, now: datetime | None) -> int | None:
+    if raw is None:
+        return None
+    delta = _delta_seconds(raw)
+    if delta is not None:
+        return delta
+    try:
+        when = parsedate_to_datetime(raw.strip())
+    except (TypeError, ValueError, IndexError):
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=UTC)
+    remaining = (when - (now or datetime.now(UTC))).total_seconds()
+    return max(0, math.ceil(remaining))
+
+
+def _body_retry_after(response: httpx.Response) -> int | None:
+    try:
+        payload = response.json()
+    except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    value = payload.get("retry_after_seconds")
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    if not math.isfinite(value) or value < 0:
+        return None
+    return math.ceil(value)
+
+
+def problem_detail(response: httpx.Response) -> str | None:
+    """The RFC 9457 problem `detail` (or `title`) of an error response, if it has one."""
+    try:
+        payload = response.json()
+    except ValueError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    detail = payload.get("detail") or payload.get("title")
+    return str(detail) if detail else None
 
 
 class AdminKitClient:
@@ -85,11 +182,14 @@ class AdminKitClient:
         await self._site_client.aclose()
 
     async def call_api(self, method: str, path: str, **kwargs: Any) -> httpx.Response:
-        """Call `/v1/...` on the Check API. Raises `ApiUnavailable` on 404/501."""
+        """Call `/v1/...` on the Check API. Raises `ApiUnavailable` on 404/501 and
+        `ApiRateLimited` on 429 (never retried automatically)."""
         await self._rate_limiter.acquire()
         response = await self._api_client.request(method, path, **kwargs)
         if response.status_code in (404, 501):
             raise ApiUnavailable(response.status_code, response.text[:200])
+        if response.status_code == 429:
+            raise ApiRateLimited(response)
         response.raise_for_status()
         return response
 
@@ -97,5 +197,7 @@ class AdminKitClient:
         """Call the fallback live site function (`https://adminkit.net/api/...`)."""
         await self._rate_limiter.acquire()
         response = await self._site_client.get(path, params=params)
+        if response.status_code == 429:
+            raise ApiRateLimited(response)
         response.raise_for_status()
         return response

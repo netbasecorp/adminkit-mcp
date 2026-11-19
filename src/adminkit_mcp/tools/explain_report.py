@@ -21,8 +21,9 @@ from typing import Any
 
 import httpx
 
-from adminkit_mcp.client import AdminKitClient, ApiUnavailable
+from adminkit_mcp.client import AdminKitClient, ApiRateLimited, ApiUnavailable, retry_after_seconds
 from adminkit_mcp.envelope import ToolResponse, not_available_yet
+from adminkit_mcp.tools._common import rate_limit_fix_hint, rate_limited_response, with_retry_wait
 
 TOOL = "explain_report"
 DEFAULT_PAGE = "https://adminkit.net/"
@@ -41,6 +42,8 @@ async def explain_report(client: AdminKitClient, report_token: str) -> ToolRespo
             fix_hint="Share links expire after 30 days; re-run the check with sharing enabled "
             "to get a new one.",
         )
+    except ApiRateLimited as exc:
+        return rate_limited_response(TOOL, exc)
     except httpx.HTTPStatusError as exc:
         return ToolResponse(
             tool=TOOL,
@@ -102,10 +105,18 @@ def _map_explain_error(response: httpx.Response, report_url: str | None) -> Tool
             report_url=report_url,
         )
     if response.status_code == 429:
+        wait = retry_after_seconds(response)
         return ToolResponse(
             tool=TOOL,
             status="error",
-            result={"message": detail or "AI daily cap or rate limit reached; retry later."},
+            result={
+                "message": with_retry_wait(
+                    detail or "AI daily cap or rate limit reached; retry later.", wait
+                ),
+                "rate_limited": True,
+                "retry_after_seconds": wait,
+            },
+            fix_hint=rate_limit_fix_hint(wait),
             report_url=report_url,
         )
     if response.status_code == 502:

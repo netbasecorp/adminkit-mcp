@@ -12,14 +12,17 @@ Each tool function is a thin wrapper that unpacks arguments, calls into
 
 from __future__ import annotations
 
+import functools
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
 from adminkit_mcp import __version__
-from adminkit_mcp.client import AdminKitClient
+from adminkit_mcp.client import AdminKitClient, ApiRateLimited
 from adminkit_mcp.config import Settings
 from adminkit_mcp.hosted import refuse_private_target
+from adminkit_mcp.tools._common import rate_limited_response
 from adminkit_mcp.tools.check_domain import WHOIS_PAGE
 from adminkit_mcp.tools.check_domain import check_domain as _check_domain
 from adminkit_mcp.tools.check_ip import check_ip as _check_ip
@@ -40,6 +43,23 @@ from adminkit_mcp.tools.list_assets import list_assets as _list_assets
 from adminkit_mcp.tools.mac_vendor import mac_vendor as _mac_vendor
 from adminkit_mcp.tools.subnet_calc import subnet_calc as _subnet_calc
 from adminkit_mcp.tools.user_agent import user_agent as _user_agent
+
+
+def _rate_limit_aware[**P](
+    fn: Callable[P, Awaitable[dict[str, Any]]],
+) -> Callable[P, Awaitable[dict[str, Any]]]:
+    """Turns an `ApiRateLimited` (API 429) that a tool did not handle itself into the standard
+    error envelope ("rate limited ... retry in N s") instead of a generic tool error. No retry.
+    `functools.wraps` keeps the signature and docstring FastMCP builds the tool schema from."""
+
+    @functools.wraps(fn)
+    async def wrapper(*args: P.args, **kwargs: P.kwargs) -> dict[str, Any]:
+        try:
+            return await fn(*args, **kwargs)
+        except ApiRateLimited as exc:
+            return rate_limited_response(fn.__name__, exc).to_dict()
+
+    return wrapper
 
 
 def build_server(client: AdminKitClient, *, settings: Settings | None = None) -> FastMCP:
@@ -66,12 +86,14 @@ def build_server(client: AdminKitClient, *, settings: Settings | None = None) ->
     mcp._mcp_server.version = __version__
 
     @mcp.tool()
+    @_rate_limit_aware
     async def check_ip(ip: str | None = None) -> dict[str, Any]:
         """Check the caller's own public IP: ASN, geolocation hint, and whether it looks
         like a shared/CGNAT address. `ip` is reserved for a future verified lookup."""
         return (await _check_ip(client, ip)).to_dict()
 
     @mcp.tool()
+    @_rate_limit_aware
     async def dns_lookup(name: str, type: str = "A") -> dict[str, Any]:
         """DNS lookup for a name. `type` is one of A, AAAA, MX, TXT, NS, CAA, PTR, SOA, CNAME."""
         if hosted_mode:
@@ -81,6 +103,7 @@ def build_server(client: AdminKitClient, *, settings: Settings | None = None) ->
         return (await _dns_lookup(client, name, type)).to_dict()
 
     @mcp.tool()
+    @_rate_limit_aware
     async def check_mail_auth(domain: str) -> dict[str, Any]:
         """Check SPF and DMARC posture for a domain's outbound mail authentication."""
         if hosted_mode:
@@ -90,6 +113,7 @@ def build_server(client: AdminKitClient, *, settings: Settings | None = None) ->
         return (await _check_mail_auth(client, domain)).to_dict()
 
     @mcp.tool()
+    @_rate_limit_aware
     async def check_domain(domain: str) -> dict[str, Any]:
         """Aggregate domain health overview: whois, TLS, HTTP headers (Check API)."""
         if hosted_mode:
@@ -99,6 +123,7 @@ def build_server(client: AdminKitClient, *, settings: Settings | None = None) ->
         return (await _check_domain(client, domain)).to_dict()
 
     @mcp.tool()
+    @_rate_limit_aware
     async def check_owned_ports(target: str) -> dict[str, Any]:
         """Check commonly-exposed device ports on a target you have verified you own.
         Requires AdminKit asset ownership verification; never an unverified scan."""
@@ -109,17 +134,20 @@ def build_server(client: AdminKitClient, *, settings: Settings | None = None) ->
         return (await _check_owned_ports(client, target)).to_dict()
 
     @mcp.tool()
+    @_rate_limit_aware
     async def explain_report(report_id: str) -> dict[str, Any]:
         """Get an AI-generated, citation-backed explanation of a previously saved AdminKit report."""
         return (await _explain_report(client, report_id)).to_dict()
 
     @mcp.tool()
+    @_rate_limit_aware
     async def get_radar(protocol: str | None = None) -> dict[str, Any]:
         """Get aggregated honeypot/telemetry trend data for a protocol (mqtt, modbus,
         mcp, rtsp, telnet, dns). Only ever aggregated across >=5 tenants."""
         return (await _get_radar(client, protocol)).to_dict()
 
     @mcp.tool()
+    @_rate_limit_aware
     async def check_mcp_endpoint(url: str, allow_private: bool = allow_private_default) -> dict[str, Any]:
         """Probe an MCP server endpoint for anonymous access: whether `initialize` and
         `tools/list` succeed without credentials, auth/OAuth discovery, TLS, and
@@ -138,6 +166,7 @@ def build_server(client: AdminKitClient, *, settings: Settings | None = None) ->
     # --- Account (read-only, needs ADMINKIT_API_KEY): the caller's own monitored assets.
 
     @mcp.tool()
+    @_rate_limit_aware
     async def list_assets() -> dict[str, Any]:
         """Read-only: list your own AdminKit assets (GET /v1/assets) with each one's kind,
         value, verified flag, value_valid (false = the stored value does not parse for its kind,
@@ -149,6 +178,7 @@ def build_server(client: AdminKitClient, *, settings: Settings | None = None) ->
         return (await _list_assets(client)).to_dict()
 
     @mcp.tool()
+    @_rate_limit_aware
     async def get_asset(asset_id: str) -> dict[str, Any]:
         """Read-only: get ONE of your own AdminKit assets by id (GET /v1/assets/{asset_id},
         ids as returned by list_assets) with its kind, value, verified flag, value_valid (false =
@@ -163,12 +193,14 @@ def build_server(client: AdminKitClient, *, settings: Settings | None = None) ->
     # third-party host contacted. A reversible enhancement on top of the 8 tools above.
 
     @mcp.tool()
+    @_rate_limit_aware
     async def subnet_calc(cidr: str) -> dict[str, Any]:
         """Calculate IPv4/IPv6 subnet details for a CIDR: network/broadcast/netmask,
         usable host range and count, and private/global/loopback/multicast flags."""
         return (await _subnet_calc(client, cidr)).to_dict()
 
     @mcp.tool()
+    @_rate_limit_aware
     async def ip_info(ip: str) -> dict[str, Any]:
         """Inspect any IPv4 or IPv6 address: version, private/global/loopback/link-local/
         multicast/reserved flags, decimal integer form, and compressed/exploded notation.
@@ -176,18 +208,21 @@ def build_server(client: AdminKitClient, *, settings: Settings | None = None) ->
         return (await _ip_info(client, ip)).to_dict()
 
     @mcp.tool()
+    @_rate_limit_aware
     async def ipv6_info(ip: str) -> dict[str, Any]:
         """Inspect an IPv6 address in depth: its /64 network, reverse-pointer form, and any
         embedded IPv4 (IPv4-mapped, 6to4, Teredo) — derived locally, nothing is queried."""
         return (await _ipv6_info(client, ip)).to_dict()
 
     @mcp.tool()
+    @_rate_limit_aware
     async def mac_vendor(mac: str) -> dict[str, Any]:
         """Look up the registered vendor for a MAC-48 address or bare OUI prefix against
         the bundled IEEE registry snapshot. Returns found=false honestly if unmatched."""
         return (await _mac_vendor(client, mac)).to_dict()
 
     @mcp.tool()
+    @_rate_limit_aware
     async def user_agent(ua: str) -> dict[str, Any]:
         """Parse a User-Agent string into browser, OS, and device family/version, plus
         a bot/crawler flag. Unmatched fields come back null, never guessed at."""

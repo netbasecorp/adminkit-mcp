@@ -41,6 +41,12 @@
 
 ### Fixed
 
+- When the AdminKit API answers 429, every tool now returns an `error` result that says it was
+  rate limited and, when the API said how long, "retry in N s" (`result.retry_after_seconds`,
+  else `null`), instead of a generic tool error. The wait comes from the `Retry-After` header
+  (seconds or HTTP-date), then the problem body's `retry_after_seconds`, then `RateLimit-Reset`;
+  it is never guessed, and the server never sleeps or retries on its own. `--http` now also sends
+  `Retry-After` (whole seconds, at least 1) and `retry_after_seconds` on its own per-client 429.
 - `initialize` now reports `serverInfo.version` as the adminkit-mcp version. Before, it reported the
   installed `mcp` SDK version.
 

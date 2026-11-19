@@ -7,7 +7,7 @@ from typing import Any
 
 import httpx
 
-from adminkit_mcp.client import AdminKitClient, ApiUnavailable
+from adminkit_mcp.client import AdminKitClient, ApiRateLimited, ApiUnavailable
 from adminkit_mcp.envelope import ToolResponse, not_available_yet
 
 
@@ -57,6 +57,38 @@ async def run_check(
     return map_check_result(tool, resp.json(), fallback_report_url=fallback_report_url)
 
 
+def rate_limit_fix_hint(seconds: int | None) -> str:
+    if seconds is None:
+        return "Wait a moment and retry; this tool does not retry automatically."
+    return f"Wait {seconds} s, then retry; this tool does not retry automatically."
+
+
+def rate_limited_response(tool: str, exc: ApiRateLimited, *, report_url: str | None = None) -> ToolResponse:
+    """Envelope for an API 429: says it was rate limited and, when the API said, how long to
+    wait (`result.retry_after_seconds`, else None). Never sleeps or retries."""
+    result: dict[str, Any] = {
+        "message": exc.message,
+        "rate_limited": True,
+        "retry_after_seconds": exc.retry_after_seconds,
+    }
+    if exc.detail:
+        result["detail"] = exc.detail
+    return ToolResponse(
+        tool=tool,
+        status="error",
+        result=result,
+        fix_hint=rate_limit_fix_hint(exc.retry_after_seconds),
+        report_url=report_url,
+    )
+
+
+def with_retry_wait(message: str, seconds: int | None) -> str:
+    """Appends "Retry in N s." to a 429 message when the wait is known; unchanged otherwise."""
+    if seconds is None:
+        return message
+    return f"{message.rstrip()} Retry in {seconds} s."
+
+
 def not_available(tool: str, *, page: str, what: str) -> ToolResponse:
     return not_available_yet(
         tool,
@@ -84,6 +116,8 @@ async def call_tools_api(
             report_url=report_url,
             detail=f"/v1/tools/{path} is not reachable on the public API right now ({exc.detail}).",
         )
+    except ApiRateLimited as exc:
+        return rate_limited_response(tool, exc, report_url=report_url)
     except httpx.HTTPStatusError as exc:
         return ToolResponse(
             tool=tool,
