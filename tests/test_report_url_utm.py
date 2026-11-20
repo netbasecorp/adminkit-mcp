@@ -22,20 +22,27 @@ from adminkit_mcp.tools.check_owned_ports import PORT_CHECK_PAGE, check_owned_po
 from adminkit_mcp.tools.dns_lookup import DNS_LOOKUP_PAGE, dns_lookup
 from adminkit_mcp.tools.explain_report import explain_report
 from adminkit_mcp.tools.get_radar import RADAR_PAGE, get_radar
+from adminkit_mcp.tools.ip_in_cidr import IP_IN_CIDR_PAGE, ip_in_cidr
 from adminkit_mcp.tools.ip_info import IP_INFO_PAGE, ip_info
+from adminkit_mcp.tools.ipv6_eui64 import IPV6_EUI64_PAGE, ipv6_eui64
 from adminkit_mcp.tools.ipv6_info import IPV6_INFO_PAGE, ipv6_info
 from adminkit_mcp.tools.mac_vendor import MAC_VENDOR_PAGE, mac_vendor
+from adminkit_mcp.tools.spf_validate import SPF_VALIDATE_PAGE, spf_validate
 from adminkit_mcp.tools.subnet_calc import SUBNET_CALC_PAGE, subnet_calc
 from adminkit_mcp.tools.user_agent import USER_AGENT_PAGE, user_agent
 from fakes.fake_api import (
     all_not_implemented_api,
     check_result_payload,
+    ip_in_cidr_payload,
     ip_info_payload,
     ip_payload,
+    ipv6_eui64_payload,
     ipv6_info_payload,
     json_handler,
     mac_vendor_payload,
     make_client,
+    problem_payload,
+    spf_validate_payload,
     subnet_payload,
     user_agent_payload,
 )
@@ -268,6 +275,64 @@ async def test_user_agent_report_url_has_utm() -> None:
     finally:
         await client.aclose()
     assert result.report_url == USER_AGENT_PAGE + "?utm_source=mcp"
+
+
+async def test_ip_in_cidr_report_url_has_utm() -> None:
+    api = make_client(
+        {("GET", "/v1/tools/ip-in-cidr"): json_handler(200, ip_in_cidr_payload())},
+        base_url="https://api.adminkit.net",
+    )
+    client = await _fake_client(api=api)
+    try:
+        result = await ip_in_cidr(client, "192.0.2.10", "192.0.2.0/24")
+    finally:
+        await client.aclose()
+    assert IP_IN_CIDR_PAGE == "https://adminkit.net/tools/ip-in-cidr/"
+    assert result.report_url == IP_IN_CIDR_PAGE + "?utm_source=mcp"
+
+
+async def test_ipv6_eui64_report_url_has_utm() -> None:
+    api = make_client(
+        {("GET", "/v1/tools/ipv6-eui64"): json_handler(200, ipv6_eui64_payload())},
+        base_url="https://api.adminkit.net",
+    )
+    client = await _fake_client(api=api)
+    try:
+        result = await ipv6_eui64(client, "2001:db8::/64", "00:1A:2B:3C:4D:5E")
+    finally:
+        await client.aclose()
+    # No dedicated EUI-64 page: the site's IPv6 tool page derives the EUI-64 id from a MAC.
+    assert IPV6_EUI64_PAGE == "https://adminkit.net/tools/ipv6-info/"
+    assert result.report_url == IPV6_EUI64_PAGE + "?utm_source=mcp"
+
+
+async def test_spf_validate_report_url_has_utm() -> None:
+    api = make_client(
+        {("GET", "/v1/tools/spf-validate"): json_handler(200, spf_validate_payload())},
+        base_url="https://api.adminkit.net",
+    )
+    client = await _fake_client(api=api)
+    try:
+        result = await spf_validate(client, "v=spf1 -all")
+    finally:
+        await client.aclose()
+    assert SPF_VALIDATE_PAGE == "https://adminkit.net/tools/spf-validate/"
+    assert result.report_url == SPF_VALIDATE_PAGE + "?utm_source=mcp"
+
+
+async def test_new_offline_tools_error_and_local_rejection_keep_utm_backlink() -> None:
+    problem = problem_payload(detail="bad input")
+    api = make_client(
+        {("GET", "/v1/tools/spf-validate"): json_handler(422, problem)}, base_url="https://api.adminkit.net"
+    )
+    client = await _fake_client(api=api)
+    try:
+        api_error = await spf_validate(client, "v=spf1 -all")
+        local_error = await ip_in_cidr(client, "", "192.0.2.0/24")
+    finally:
+        await client.aclose()
+    assert api_error.report_url == SPF_VALIDATE_PAGE + "?utm_source=mcp"
+    assert local_error.report_url == IP_IN_CIDR_PAGE + "?utm_source=mcp"
 
 
 async def test_explain_report_unknown_token_has_no_backlink() -> None:

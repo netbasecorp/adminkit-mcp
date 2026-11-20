@@ -1,5 +1,26 @@
 # Changelog
 
+## Unreleased
+
+18 tools (was 15 in 0.2.0). Not published yet; the package version stays 0.2.0 until a release.
+
+### Added
+
+- Unreleased: added `ip_in_cidr`, `ipv6_eui64`, `spf_validate` — three more offline utility tools
+  wrapping the live, no-auth `/v1/tools/*` endpoints:
+  - `ip_in_cidr(ip, cidr)` (`GET /v1/tools/ip-in-cidr`): whether an IPv4/IPv6 address is inside a
+    CIDR range (`contains`, normalized `network`). Links to https://adminkit.net/tools/ip-in-cidr/.
+  - `ipv6_eui64(prefix, mac)` (`GET /v1/tools/ipv6-eui64`): the modified EUI-64 interface id of a
+    MAC-48 and the full IPv6 address it forms in a /64-or-shorter prefix. Links to
+    https://adminkit.net/tools/ipv6-info/ (the site's IPv6 tool, which also derives EUI-64 ids).
+  - `spf_validate(record)` (`GET /v1/tools/spf-validate`): static SPF record syntax check, no DNS
+    lookups; envelope status `ok` / `warn` / `fail` from the API's `valid` /
+    `valid_with_warnings` / `invalid` verdict, `fix_hint` = the worst finding's message. Links to
+    https://adminkit.net/tools/spf-validate/.
+- All three refuse empty or oversized arguments locally, without a request, and report an API 422
+  as an explicit `error` envelope and an API 429 as the standard "rate limited ... retry in N s"
+  result (no automatic retry), like the other offline tools.
+
 ## 0.2.0 - unreleased
 
 15 tools (was 13).

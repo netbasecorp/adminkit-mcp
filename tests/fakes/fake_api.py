@@ -210,6 +210,42 @@ def ip_info_payload(*, ip: str = "203.0.113.9", version: int = 4) -> dict[str, A
     }
 
 
+def ip_in_cidr_payload(
+    *, ip: str = "192.0.2.10", cidr: str = "192.0.2.0/24", contains: bool = True
+) -> dict[str, Any]:
+    """Synthetic `IpInCidrResponse` (`platform/adminkit/tools/models.py`)."""
+    return {"ip": ip, "cidr": cidr, "contains": contains, "network": cidr}
+
+
+def ipv6_eui64_payload(*, prefix: str = "2001:db8::/64", mac: str = "00:1A:2B:3C:4D:5E") -> dict[str, Any]:
+    """Synthetic `Ipv6Eui64Response` for the RFC 3849 documentation prefix."""
+    return {
+        "prefix": prefix,
+        "mac": mac,
+        "interface_id": "021a:2bff:fe3c:4d5e",
+        "address": "2001:db8::21a:2bff:fe3c:4d5e",
+        "compressed": "2001:db8::21a:2bff:fe3c:4d5e",
+        "exploded": "2001:0db8:0000:0000:021a:2bff:fe3c:4d5e",
+    }
+
+
+def spf_validate_payload(
+    *,
+    record: str = "v=spf1 include:_spf.example.com -all",
+    verdict: str = "valid",
+    findings: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    """Synthetic `SpfValidateResponse` (`platform/adminkit/tools/models.py`)."""
+    return {
+        "record": record,
+        "verdict": verdict,
+        "has_version": record.lower().startswith("v=spf1"),
+        "lookup_term_count": 1,
+        "lookup_term_limit": 10,
+        "findings": findings or [],
+    }
+
+
 def ipv6_info_payload(
     *,
     ip: str = "2001:db8::1",

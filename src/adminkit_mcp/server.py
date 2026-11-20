@@ -1,7 +1,8 @@
 """Builds the AdminKit FastMCP server: registers the 8 tools from spec section 18.8, plus
-5 "offline utility" tools (spec section 18.1/18.7) wrapping the no-auth `/v1/tools/*`
-endpoints (subnet/IP/MAC/UA math) — grouped separately below since they are a reversible
-enhancement on top of the original 8, not part of the named spec section 18.8 list.
+8 "offline utility" tools (spec section 18.1/18.7) wrapping the no-auth `/v1/tools/*`
+endpoints (subnet/IP/CIDR/EUI-64/MAC/UA math and static SPF syntax) — grouped separately
+below since they are a reversible enhancement on top of the original 8, not part of the named
+spec section 18.8 list.
 `list_assets` and `get_asset` are read-only, API-key-only views of the caller's own
 monitored assets (L0 monitoring), also outside the 18.8 list.
 
@@ -37,10 +38,13 @@ from adminkit_mcp.tools.dns_lookup import dns_lookup as _dns_lookup
 from adminkit_mcp.tools.explain_report import explain_report as _explain_report
 from adminkit_mcp.tools.get_asset import get_asset as _get_asset
 from adminkit_mcp.tools.get_radar import get_radar as _get_radar
+from adminkit_mcp.tools.ip_in_cidr import ip_in_cidr as _ip_in_cidr
 from adminkit_mcp.tools.ip_info import ip_info as _ip_info
+from adminkit_mcp.tools.ipv6_eui64 import ipv6_eui64 as _ipv6_eui64
 from adminkit_mcp.tools.ipv6_info import ipv6_info as _ipv6_info
 from adminkit_mcp.tools.list_assets import list_assets as _list_assets
 from adminkit_mcp.tools.mac_vendor import mac_vendor as _mac_vendor
+from adminkit_mcp.tools.spf_validate import spf_validate as _spf_validate
 from adminkit_mcp.tools.subnet_calc import subnet_calc as _subnet_calc
 from adminkit_mcp.tools.user_agent import user_agent as _user_agent
 
@@ -227,5 +231,29 @@ def build_server(client: AdminKitClient, *, settings: Settings | None = None) ->
         """Parse a User-Agent string into browser, OS, and device family/version, plus
         a bot/crawler flag. Unmatched fields come back null, never guessed at."""
         return (await _user_agent(client, ua)).to_dict()
+
+    @mcp.tool()
+    @_rate_limit_aware
+    async def ip_in_cidr(ip: str, cidr: str) -> dict[str, Any]:
+        """Check whether an IPv4/IPv6 address falls inside a CIDR range; returns `contains`
+        and the normalized network. An address of the other IP version is simply not contained."""
+        return (await _ip_in_cidr(client, ip, cidr)).to_dict()
+
+    @mcp.tool()
+    @_rate_limit_aware
+    async def ipv6_eui64(prefix: str, mac: str) -> dict[str, Any]:
+        """Derive the SLAAC address a device with MAC-48 `mac` would form in IPv6 `prefix`
+        (/64 or shorter): the modified EUI-64 interface id (U/L bit flipped) and the full
+        address in compressed/exploded form. Computed locally, nothing is queried."""
+        return (await _ipv6_eui64(client, prefix, mac)).to_dict()
+
+    @mcp.tool()
+    @_rate_limit_aware
+    async def spf_validate(record: str) -> dict[str, Any]:
+        """Statically validate an SPF TXT record string (e.g. 'v=spf1 include:_spf.example.com
+        ~all'): verdict, findings with severity, and the lookup-term count of this record only.
+        No DNS lookups and no include/redirect following; use check_mail_auth for a domain's
+        live, fully resolved SPF."""
+        return (await _spf_validate(client, record)).to_dict()
 
     return mcp

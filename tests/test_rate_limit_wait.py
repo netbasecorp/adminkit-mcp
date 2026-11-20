@@ -16,7 +16,10 @@ from adminkit_mcp.hosted import ClientRateLimitMiddleware
 from adminkit_mcp.ratelimit import PerClientRateLimiter
 from adminkit_mcp.server import build_server
 from adminkit_mcp.tools.explain_report import explain_report
+from adminkit_mcp.tools.ip_in_cidr import ip_in_cidr
+from adminkit_mcp.tools.ipv6_eui64 import ipv6_eui64
 from adminkit_mcp.tools.list_assets import list_assets
+from adminkit_mcp.tools.spf_validate import spf_validate
 from adminkit_mcp.tools.subnet_calc import subnet_calc
 from fakes.fake_api import (
     all_not_implemented_api,
@@ -167,6 +170,60 @@ async def test_api_429_is_not_retried_automatically() -> None:
     assert result.status == "error"
     assert result.result["message"] == "Rate limited by the AdminKit API (HTTP 429); retry in 1 s."
     assert result.result["detail"] == "Rate limit exceeded."
+
+
+@pytest.mark.parametrize(
+    ("path", "call"),
+    [
+        ("/v1/tools/ip-in-cidr", lambda c: ip_in_cidr(c, "192.0.2.10", "192.0.2.0/24")),
+        ("/v1/tools/ipv6-eui64", lambda c: ipv6_eui64(c, "2001:db8::/64", "00:1A:2B:3C:4D:5E")),
+        ("/v1/tools/spf-validate", lambda c: spf_validate(c, "v=spf1 -all")),
+    ],
+)
+async def test_new_offline_tools_429_say_retry_in_n_s_and_are_not_retried(path: str, call: Any) -> None:
+    calls: list[str] = []
+    api = make_recording_client(
+        calls, {("GET", path): _handler_429(_problem_429(), {"Retry-After": "2"})}, base_url=API_BASE
+    )
+    client = AdminKitClient(api, all_not_implemented_api(base_url=SITE_BASE))
+    try:
+        result = await call(client)
+    finally:
+        await client.aclose()
+    assert calls == [f"GET {path}"]
+    assert result.status == "error"
+    assert result.result["rate_limited"] is True
+    assert result.result["retry_after_seconds"] == 2
+    assert result.result["message"] == "Rate limited by the AdminKit API (HTTP 429); retry in 2 s."
+    assert "2 s" in result.fix_hint
+
+
+@pytest.mark.parametrize(
+    ("tool", "path", "args"),
+    [
+        ("ip_in_cidr", "/v1/tools/ip-in-cidr", {"ip": "192.0.2.10", "cidr": "192.0.2.0/24"}),
+        ("ipv6_eui64", "/v1/tools/ipv6-eui64", {"prefix": "2001:db8::/64", "mac": "00:1A:2B:3C:4D:5E"}),
+        ("spf_validate", "/v1/tools/spf-validate", {"record": "v=spf1 -all"}),
+    ],
+)
+async def test_new_offline_tools_429_through_fastmcp_is_rate_limited_envelope(
+    tool: str, path: str, args: dict[str, str]
+) -> None:
+    api = make_client(
+        {("GET", path): _handler_429(_problem_429(retry_after_seconds=8), {"Retry-After": "8"})},
+        base_url=API_BASE,
+    )
+    client = AdminKitClient(api, all_not_implemented_api(base_url=SITE_BASE))
+    mcp = build_server(client)
+    try:
+        _content, structured = await mcp.call_tool(tool, args)
+    finally:
+        await client.aclose()
+    assert isinstance(structured, dict)
+    assert structured["tool"] == tool
+    assert structured["status"] == "error"
+    assert structured["result"]["retry_after_seconds"] == 8
+    assert "retry in 8 s" in structured["result"]["message"]
 
 
 async def test_api_429_raises_rate_limited_which_is_still_an_http_status_error() -> None:

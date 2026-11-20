@@ -98,6 +98,21 @@ def not_available(tool: str, *, page: str, what: str) -> ToolResponse:
     )
 
 
+def validate_text_input(name: str, value: str, *, max_length: int) -> str | None:
+    """Returns why a free-text tool argument is unacceptable (empty/blank or longer than
+    `max_length`), or None if it may be sent. Checked locally so no request is made for it."""
+    if not isinstance(value, str) or not value.strip():
+        return f"{name} must not be empty."
+    if len(value) > max_length:
+        return f"{name} must be at most {max_length} characters."
+    return None
+
+
+def invalid_input(tool: str, message: str, *, report_url: str | None = None) -> ToolResponse:
+    """Envelope for an argument refused locally by `validate_text_input` (no API call made)."""
+    return ToolResponse(tool=tool, status="error", result={"message": message}, report_url=report_url)
+
+
 async def call_tools_api(
     client: AdminKitClient, tool: str, path: str, *, params: dict[str, Any], report_url: str
 ) -> dict[str, Any] | ToolResponse:
