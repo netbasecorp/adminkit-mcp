@@ -38,9 +38,9 @@ These two tools read your own AdminKit account, so they need an AdminKit API key
 read: they never create, verify, check or delete an asset, and never return an asset's
 verification token or your API key.
 
-- `list_assets` lists your assets with `id`, `kind`, `value`, `verified`, `last_checked_at` and
-  the stored monitored `status` (`{passing, reason, checked_at}`, or `null` if not checked yet),
-  plus the ids of failing and not-yet-checked assets. Ask: "which of my assets are failing?"
+- `list_assets` lists your assets with `id`, `kind`, `value`, `verified`, `value_valid`,
+  `last_checked_at` and the stored monitored `status` (`{passing, reason, checked_at}`, or `null`
+  if not checked yet), plus the ids of failing and not-yet-checked assets. Ask: "which of my assets are failing?"
 - `get_asset(asset_id)` returns the same fields for one asset. A malformed id is refused without a
   request; an unknown id and another organization's id both answer "asset not found in your
   organization".
@@ -91,6 +91,7 @@ tools therefore always answer "API key required" over `--http`; use stdio for th
 | `ADMINKIT_API_KEY` | unset | Optional AdminKit API key (`explain_report`, `list_assets`, `get_asset`, higher limits). Never logged. |
 | `ADMINKIT_MCP_TIMEOUT_SECONDS` | `10` | Per-request timeout. |
 | `ADMINKIT_MCP_RATE_LIMIT_PER_SECOND` | `5` | Client-side rate limit. |
+| `ADMINKIT_MCP_ALLOW_PRIVATE` | unset (off) | `1`, `true` or `yes`: `check_mcp_endpoint` may probe private/loopback targets by default (CI fixtures only; same as `--allow-private`). Ignored over `--http`. |
 | `ADMINKIT_MCP_HOSTED_RATE_LIMIT_PER_MINUTE` | `30` | `--http` only: requests per minute per client IP. |
 | `ADMINKIT_MCP_HOSTED_RATE_LIMIT_BURST` | `5` | `--http` only: burst allowance per client IP. |
 | `ADMINKIT_MCP_HOSTED_MAX_BODY_BYTES` | `65536` | `--http` only: maximum request body size. |
