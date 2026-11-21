@@ -31,27 +31,16 @@ from adminkit_mcp.tools._assets import (
     map_error,
     unreachable,
 )
+from adminkit_mcp.tools._common import validate_path_segment
 
 TOOL = "get_asset"
 MAX_ASSET_ID_LENGTH = 128
-_FORBIDDEN_CHARS = frozenset("/?#%\\")
 
 
 def validate_asset_id(asset_id: str) -> str | None:
     """Returns why `asset_id` is unacceptable, or None if it may be sent. Asset ids are
     `ast_`-prefixed ULIDs; this only rejects ids that could not be one safely in a URL path."""
-    if not asset_id:
-        return "asset_id must not be empty."
-    if len(asset_id) > MAX_ASSET_ID_LENGTH:
-        return f"asset_id must be at most {MAX_ASSET_ID_LENGTH} characters."
-    if ".." in asset_id:
-        return "asset_id must not contain '..'."
-    for ch in asset_id:
-        if ch in _FORBIDDEN_CHARS:
-            return f"asset_id must not contain {ch!r}."
-        if ch.isspace() or not ch.isprintable():
-            return "asset_id must not contain whitespace or control characters."
-    return None
+    return validate_path_segment("asset_id", asset_id, max_length=MAX_ASSET_ID_LENGTH)
 
 
 async def get_asset(client: AdminKitClient, asset_id: str) -> ToolResponse:

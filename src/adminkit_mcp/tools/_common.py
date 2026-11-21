@@ -108,6 +108,28 @@ def validate_text_input(name: str, value: str, *, max_length: int) -> str | None
     return None
 
 
+_FORBIDDEN_PATH_CHARS = frozenset("/?#%\\")
+
+
+def validate_path_segment(name: str, value: str, *, max_length: int) -> str | None:
+    """Returns why `value` cannot safely be one URL path segment (empty, longer than
+    `max_length`, containing '..', '/', '?', '#', '%', '\\', whitespace or control
+    characters), or None if it may be sent. Callers still percent-encode it with
+    `quote(value, safe='')`; this check refuses such values before any request is made."""
+    if not value:
+        return f"{name} must not be empty."
+    if len(value) > max_length:
+        return f"{name} must be at most {max_length} characters."
+    if ".." in value:
+        return f"{name} must not contain '..'."
+    for ch in value:
+        if ch in _FORBIDDEN_PATH_CHARS:
+            return f"{name} must not contain {ch!r}."
+        if ch.isspace() or not ch.isprintable():
+            return f"{name} must not contain whitespace or control characters."
+    return None
+
+
 def invalid_input(tool: str, message: str, *, report_url: str | None = None) -> ToolResponse:
     """Envelope for an argument refused locally by `validate_text_input` (no API call made)."""
     return ToolResponse(tool=tool, status="error", result={"message": message}, report_url=report_url)

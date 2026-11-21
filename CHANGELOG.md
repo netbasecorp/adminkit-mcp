@@ -21,6 +21,10 @@
   as an explicit `error` envelope and an API 429 as the standard "rate limited ... retry in N s"
   result (no automatic retry), like the other offline tools.
 
+### Fixed
+
+- `explain_report` validates `report_token` locally (non-empty, at most 128 characters, no `..`, `/`, `?`, `#`, `%`, `\`, whitespace or control characters) and refuses a bad token without any request; a valid token is percent-encoded, so a token like `../../v1/account/keys` can no longer send the configured API key to another API route.
+
 ## 0.2.0 - unreleased
 
 15 tools (was 13).

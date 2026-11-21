@@ -13,25 +13,46 @@ Two real calls, in order, both live on main:
 13.1: AI never auto-applies anything, and this tool never forges or strips auth to make the
 call "work" anonymously). Every failure mode below is mapped to an honest `ToolResponse`; this
 tool never fabricates or partially returns an explanation.
+
+`report_token` is validated locally (`validate_path_segment`) and percent-encoded into the path,
+so a token such as `../../v1/account/keys` can never redirect the authenticated GET to another
+API route; a bad token is refused without any request.
 """
 
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
 from adminkit_mcp.client import AdminKitClient, ApiRateLimited, ApiUnavailable, retry_after_seconds
 from adminkit_mcp.envelope import ToolResponse, not_available_yet
-from adminkit_mcp.tools._common import rate_limit_fix_hint, rate_limited_response, with_retry_wait
+from adminkit_mcp.tools._common import (
+    rate_limit_fix_hint,
+    rate_limited_response,
+    validate_path_segment,
+    with_retry_wait,
+)
 
 TOOL = "explain_report"
 DEFAULT_PAGE = "https://adminkit.net/"
+MAX_REPORT_TOKEN_LENGTH = 128
 
 
 async def explain_report(client: AdminKitClient, report_token: str) -> ToolResponse:
+    problem = validate_path_segment("report_token", report_token, max_length=MAX_REPORT_TOKEN_LENGTH)
+    if problem is not None:
+        return ToolResponse(
+            tool=TOOL,
+            status="error",
+            result={"message": f"Invalid report_token: {problem} No request was sent."},
+            fix_hint="Use the token from a shared report link (the last part of "
+            "https://api.adminkit.net/v1/report/<token>).",
+            report_url=DEFAULT_PAGE,
+        )
     try:
-        report_resp = await client.call_api("GET", f"/v1/report/{report_token}")
+        report_resp = await client.call_api("GET", f"/v1/report/{quote(report_token, safe='')}")
     except ApiUnavailable:
         return ToolResponse(
             tool=TOOL,

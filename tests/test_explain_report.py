@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import httpx
+
 from adminkit_mcp.client import AdminKitClient
 from adminkit_mcp.tools.explain_report import explain_report
 from fakes.fake_api import (
@@ -181,3 +183,77 @@ async def test_explain_report_citation_invalid_fails_closed() -> None:
     assert result.status == "error"
     assert "citation" in result.result["message"].lower()
     assert "explanation" not in result.result
+
+
+async def test_explain_report_rejects_path_traversal_token_without_request() -> None:
+    bad_tokens = [
+        "../../v1/account/keys",
+        "x?y=1",
+        "a/b",
+        "",
+        "..",
+        "a#b",
+        "a%2Fb",
+        "a\\b",
+        "a b",
+        "a\x00b",
+        "a" * 300,
+    ]
+    for token in bad_tokens:
+        calls: list[str] = []
+        api = make_recording_client(
+            calls,
+            {
+                ("GET", "/v1/account/keys"): json_handler(200, {"keys": ["replace-with-test-key"]}),
+                ("POST", "/v1/ai/explain"): json_handler(200, ai_explain_payload()),
+            },
+            base_url="https://api.adminkit.net",
+            headers={"X-API-Key": "replace-with-test-key"},
+        )
+        site_calls: list[str] = []
+        site = make_recording_client(site_calls, {}, base_url="https://adminkit.net")
+        client = AdminKitClient(api, site)
+        try:
+            result = await explain_report(client, token)
+        finally:
+            await client.aclose()
+
+        assert calls == [], token
+        assert site_calls == [], token
+        assert result.status == "error", token
+        assert result.result["message"].startswith("Invalid report_token"), token
+        assert "No request was sent" in result.result["message"]
+        assert result.evidence == {}
+        assert "explanation" not in result.result
+
+
+async def test_explain_report_percent_encodes_token() -> None:
+    seen: list[str] = []
+    share_id = "rpt_01H8:x+y@z"
+    report = check_result_payload(check="spf", target="example.com", status="ok", summary="All clear")
+
+    def report_handler(request: httpx.Request) -> httpx.Response:
+        seen.append(request.url.raw_path.decode("ascii"))
+        return httpx.Response(200, json=report)
+
+    calls: list[str] = []
+    api = make_recording_client(
+        calls,
+        {
+            ("GET", "/v1/report/rpt_01H8:x+y@z"): report_handler,
+            ("POST", "/v1/ai/explain"): json_handler(
+                200, ai_explain_payload(check="spf", target="example.com")
+            ),
+        },
+        base_url="https://api.adminkit.net",
+    )
+    site = all_not_implemented_api(base_url="https://adminkit.net")
+    client = AdminKitClient(api, site)
+    try:
+        result = await explain_report(client, share_id)
+    finally:
+        await client.aclose()
+
+    assert result.status == "ok"
+    assert seen == ["/v1/report/rpt_01H8%3Ax%2By%40z"]
+    assert calls == ["GET /v1/report/rpt_01H8:x+y@z", "POST /v1/ai/explain"]
