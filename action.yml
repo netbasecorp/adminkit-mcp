@@ -50,16 +50,22 @@ runs:
 
     - name: Install adminkit-mcp (pinned to this action's own git ref)
       shell: bash
-      run: pip install "${{ github.action_path }}"
+      run: pip install "$GITHUB_ACTION_PATH/../../mcp"
 
     - name: Scan MCP endpoint
       id: scan
       shell: bash
+      # Inputs reach the script only through env vars, never via ${{ }} interpolation into the
+      # script text: an interpolated value is pasted into the bash source before it runs, so a url
+      # like '";touch /tmp/pwned;"' would execute with ADMINKIT_API_KEY in scope.
       env:
         ADMINKIT_API_KEY: ${{ inputs.api-key }}
+        INPUT_URL: ${{ inputs.url }}
+        INPUT_FAIL_ON: ${{ inputs.fail-on }}
+        INPUT_ALLOW_PRIVATE: ${{ inputs.allow-private }}
       run: |
-        set -- --url "${{ inputs.url }}" --fail-on "${{ inputs.fail-on }}"
-        if [ "${{ inputs.allow-private }}" = "true" ]; then
+        set -- --url "$INPUT_URL" --fail-on "$INPUT_FAIL_ON"
+        if [ "$INPUT_ALLOW_PRIVATE" = "true" ]; then
           set -- "$@" --allow-private
         fi
-        python "${{ github.action_path }}/action/scan.py" "$@"
+        python "$GITHUB_ACTION_PATH/scan.py" "$@"
