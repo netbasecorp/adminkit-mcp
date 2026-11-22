@@ -8,24 +8,32 @@ PYTHONPATH at `mcp/tests` so this reuses `fakes.fake_mcp_server` (do not duplica
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import re
 import shutil
+import socket
 import stat
 import subprocess
 import sys
 import tempfile
 import threading
+import time
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "tests"))
+from adminkit_mcp.probe.mcp_probe import McpProbeResult  # noqa: E402
 from fakes.fake_mcp_server import FakeMcpConfig, _make_server  # noqa: E402
 
 ACTION_DIR = Path(__file__).resolve().parents[1]
 SCAN_PY = ACTION_DIR / "scan.py"
 ACTION_YML = ACTION_DIR / "action.yml"
+
+sys.path.insert(0, str(ACTION_DIR))
+import scan  # noqa: E402
 
 
 def start_server(config: FakeMcpConfig) -> tuple[ThreadingHTTPServer, str]:
@@ -36,7 +44,9 @@ def start_server(config: FakeMcpConfig) -> tuple[ThreadingHTTPServer, str]:
     return server, f"http://{host}:{port}"
 
 
-def run_scan(url: str, fail_on: str, *, allow_private: bool = True) -> tuple[int, str, dict[str, str]]:
+def run_scan(
+    url: str, fail_on: str, *, allow_private: bool = True, extra_args: tuple[str, ...] = ()
+) -> tuple[int, str, dict[str, str]]:
     with tempfile.TemporaryDirectory() as tmp:
         summary_path = Path(tmp) / "summary.md"
         output_path = Path(tmp) / "output.txt"
@@ -49,6 +59,7 @@ def run_scan(url: str, fail_on: str, *, allow_private: bool = True) -> tuple[int
         args = [sys.executable, str(SCAN_PY), "--url", url, "--fail-on", fail_on]
         if allow_private:
             args.append("--allow-private")
+        args.extend(extra_args)
         proc = subprocess.run(  # noqa: S603 -- fixed, locally-built argv; no shell, no untrusted input
             args, env=env, capture_output=True, text=True, timeout=30
         )
@@ -85,7 +96,9 @@ def scan_step_env_and_script() -> tuple[dict[str, str], str]:
         if indent == step_indent and stripped in ("env:", "run: |"):
             block: list[str] = []
             i += 1
-            while i < len(lines) and (not lines[i].strip() or len(lines[i]) - len(lines[i].lstrip()) > indent):
+            while i < len(lines) and (
+                not lines[i].strip() or len(lines[i]) - len(lines[i].lstrip()) > indent
+            ):
                 block.append(lines[i])
                 i += 1
             if stripped == "env:":
@@ -129,6 +142,7 @@ def test_scan_step_does_not_execute_shell_in_inputs() -> None:
             "fail-on": f'critical";touch {marker};"',
             "allow-private": f'true" ]; touch {marker}; [ "',
             "api-key": "dummy-test-key",
+            "timeout-seconds": f'60";touch {marker};"',
         }
         env_block, script = scan_step_env_and_script()
 
@@ -161,7 +175,16 @@ def test_scan_step_does_not_execute_shell_in_inputs() -> None:
         check("${{" not in script, "scan step run: script must not interpolate ${{ }} expressions")
         argv = json.loads(argv_log.read_text())
         check(
-            argv == [str(SCAN_PY), "--url", payload, "--fail-on", inputs["fail-on"]],
+            argv
+            == [
+                str(SCAN_PY),
+                "--url",
+                payload,
+                "--fail-on",
+                inputs["fail-on"],
+                "--timeout-seconds",
+                inputs["timeout-seconds"],
+            ],
             f"inputs must reach scan.py verbatim as single arguments, got {argv}",
         )
 
@@ -231,12 +254,151 @@ def test_private_target_without_allow_private_is_skipped() -> None:
         server.server_close()
 
 
+def test_timeout_seconds_input_declared() -> None:
+    """action.yml declares `timeout-seconds` with default "60" and passes it via env only."""
+    text = ACTION_YML.read_text()
+    check(
+        re.search(r'^  timeout-seconds:\n(?:    .*\n|      .*\n)*?    default: "60"$', text, re.M)
+        is not None,
+        'action.yml must declare input timeout-seconds with default "60"',
+    )
+    env_block, script = scan_step_env_and_script()
+    check(
+        env_block.get("INPUT_TIMEOUT_SECONDS") == "${{ inputs.timeout-seconds }}",
+        "timeout-seconds must go via env",
+    )
+    check('--timeout-seconds "$INPUT_TIMEOUT_SECONDS"' in script, "scan step must pass --timeout-seconds")
+
+
+def test_timeout_seconds_validation() -> None:
+    """Bounds are 5..600 (inclusive), integers only; a bad value is a usage error (exit 2)
+    before any network access, and the default is 60."""
+    check(scan._parse_args(["--url", "http://x"]).timeout_seconds == 60, "default timeout must be 60")
+    for ok in ("5", "600", " 30 "):
+        check(scan._timeout_seconds(ok) == int(ok), f"{ok!r} must be accepted")
+    for bad in ("4", "601", "0", "-1", "abc", "", "1.5", "60s"):
+        proc = subprocess.run(  # noqa: S603 -- fixed, locally-built argv; no shell
+            [sys.executable, str(SCAN_PY), "--url", "http://127.0.0.1:1/mcp", "--timeout-seconds", bad],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        check(
+            proc.returncode == 2,
+            f"timeout-seconds={bad!r}: expected usage error exit 2, got {proc.returncode}",
+        )
+        check(
+            "timeout-seconds" in proc.stderr,
+            f"timeout-seconds={bad!r}: error must name the input: {proc.stderr}",
+        )
+
+
+class _PatchedProbe:
+    """Replaces `scan.probe_mcp_endpoint` with a fake coroutine for the duration of a `with`."""
+
+    def __init__(self, fake: Any) -> None:
+        self.fake = fake
+
+    def __enter__(self) -> None:
+        self.original = vars(scan)["probe_mcp_endpoint"]
+        vars(scan)["probe_mcp_endpoint"] = self.fake
+
+    def __exit__(self, *exc: object) -> None:
+        vars(scan)["probe_mcp_endpoint"] = self.original
+
+
+def test_timeout_with_sleeping_fake_probe() -> None:
+    """A probe that never finishes (patched; no network) is cut off at timeout-seconds: status
+    `error`, a clear summary, exit 1 even with fail-on=none, and outputs still written."""
+    cancelled: list[bool] = []
+
+    async def sleeping_probe(url: str, **_kwargs: Any) -> McpProbeResult:
+        try:
+            await asyncio.sleep(3600)
+        except asyncio.CancelledError:
+            cancelled.append(True)
+            raise
+        raise AssertionError("unreachable")
+
+    with _PatchedProbe(sleeping_probe):
+        result, timed_out = scan._run_bounded(
+            "https://slow.invalid/mcp", allow_private=False, timeout_seconds=0.2
+        )
+        check(timed_out and result.status == "error", f"expected timed-out error result, got {result}")
+        check(cancelled == [True], "the probe task must be cancelled on timeout")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            summary_path = Path(tmp) / "summary.md"
+            output_path = Path(tmp) / "output.txt"
+            saved = {k: os.environ.get(k) for k in ("GITHUB_STEP_SUMMARY", "GITHUB_OUTPUT")}
+            os.environ["GITHUB_STEP_SUMMARY"] = str(summary_path)
+            os.environ["GITHUB_OUTPUT"] = str(output_path)
+            try:
+                start = time.monotonic()
+                code, timed_out = scan.run(
+                    ["--url", "https://slow.invalid/mcp", "--fail-on", "none", "--timeout-seconds", "5"]
+                )
+                elapsed = time.monotonic() - start
+            finally:
+                for k, v in saved.items():
+                    if v is None:
+                        os.environ.pop(k, None)
+                    else:
+                        os.environ[k] = v
+            summary = summary_path.read_text()
+            outputs = output_path.read_text()
+        check(timed_out, "run() must report the timeout")
+        check(code == 1, f"timed-out scan must fail even with fail-on=none, got {code}")
+        check(4.5 <= elapsed < 15, f"expected to stop at ~5 s, took {elapsed:.1f} s")
+        check("Status: **error**" in summary, "expected error status in summary")
+        check("timed out after 5 s" in summary, f"expected a clear timeout message, got: {summary}")
+        check(
+            "score=\n" in outputs and "findings-json=[]\n" in outputs,
+            f"outputs must still be written: {outputs!r}",
+        )
+
+
+def test_fast_fake_probe_is_not_affected_by_timeout() -> None:
+    async def fast_probe(url: str, **_kwargs: Any) -> McpProbeResult:
+        return McpProbeResult(url=url, status="ok", summary="fine", score=100)
+
+    with _PatchedProbe(fast_probe):
+        result, timed_out = scan._run_bounded(
+            "https://fast.invalid/mcp", allow_private=False, timeout_seconds=5
+        )
+    check(not timed_out and result.status == "ok", f"fast probe must pass through untouched, got {result}")
+
+
+def test_timeout_against_hanging_local_server() -> None:
+    """End to end via the real probe: a 127.0.0.1 socket that accepts connections (kernel backlog)
+    but never answers. The probe's own per-request timeouts add up to more than 5 s, so the overall
+    bound is what ends the process."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("127.0.0.1", 0))
+        sock.listen(16)
+        port = sock.getsockname()[1]
+        start = time.monotonic()
+        code, summary, outputs = run_scan(
+            f"http://127.0.0.1:{port}/mcp", "none", extra_args=("--timeout-seconds", "5")
+        )
+        elapsed = time.monotonic() - start
+    check(code == 1, f"hanging target must fail with fail-on=none, got {code}")
+    check("timed out after 5 s" in summary, f"expected timeout summary, got: {summary}")
+    check(outputs.get("score") == "", f"expected empty score, got {outputs.get('score')!r}")
+    check(elapsed < 20, f"expected exit shortly after 5 s, took {elapsed:.1f} s")
+
+
 def main() -> int:
     test_scan_step_does_not_execute_shell_in_inputs()
     test_warn_only_target()
     test_critical_target()
     test_unreachable_target_always_fails()
     test_private_target_without_allow_private_is_skipped()
+    test_timeout_seconds_input_declared()
+    test_timeout_seconds_validation()
+    test_timeout_with_sleeping_fake_probe()
+    test_fast_fake_probe_is_not_affected_by_timeout()
+    test_timeout_against_hanging_local_server()
     print("all integrations/github-action tests passed")
     return 0
 

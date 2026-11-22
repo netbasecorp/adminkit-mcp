@@ -31,6 +31,12 @@ inputs:
       server they started themselves; leave this false for any real endpoint.
     required: false
     default: "false"
+  timeout-seconds:
+    description: >-
+      Overall time bound for the whole scan, in seconds (integer, 5-600). A scan that does not
+      finish in time is reported as an error and always fails the step, independent of fail-on.
+    required: false
+    default: "60"
 
 outputs:
   score:
@@ -63,8 +69,9 @@ runs:
         INPUT_URL: ${{ inputs.url }}
         INPUT_FAIL_ON: ${{ inputs.fail-on }}
         INPUT_ALLOW_PRIVATE: ${{ inputs.allow-private }}
+        INPUT_TIMEOUT_SECONDS: ${{ inputs.timeout-seconds }}
       run: |
-        set -- --url "$INPUT_URL" --fail-on "$INPUT_FAIL_ON"
+        set -- --url "$INPUT_URL" --fail-on "$INPUT_FAIL_ON" --timeout-seconds "$INPUT_TIMEOUT_SECONDS"
         if [ "$INPUT_ALLOW_PRIVATE" = "true" ]; then
           set -- "$@" --allow-private
         fi

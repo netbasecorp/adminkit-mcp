@@ -6,6 +6,11 @@ This file holds no scanning logic of its own: it calls
 read-only probe shipped in `mcp/`, pinned to this action's own git ref), then
 formats the result as a GitHub Actions job summary + outputs and exits
 non-zero according to `--fail-on`.
+
+The whole probe runs under an overall `--timeout-seconds` bound (default 60, 5..600): a
+slow or hostile endpoint must not be able to hold a CI job until GitHub's 6 h job limit.
+A timed-out scan is reported as status `error` and, like any other scan that could not
+complete, fails the step regardless of `--fail-on`.
 """
 
 from __future__ import annotations
@@ -19,6 +24,21 @@ import sys
 from adminkit_mcp.probe.mcp_probe import McpProbeResult, probe_mcp_endpoint
 
 _FAIL_ON_CHOICES = ("none", "warning", "critical")
+TIMEOUT_DEFAULT_SECONDS = 60
+TIMEOUT_MIN_SECONDS = 5
+TIMEOUT_MAX_SECONDS = 600
+
+
+def _timeout_seconds(value: str) -> int:
+    try:
+        seconds = int(value.strip())
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"timeout-seconds must be an integer, got {value!r}") from None
+    if not TIMEOUT_MIN_SECONDS <= seconds <= TIMEOUT_MAX_SECONDS:
+        raise argparse.ArgumentTypeError(
+            f"timeout-seconds must be between {TIMEOUT_MIN_SECONDS} and {TIMEOUT_MAX_SECONDS}, got {seconds}"
+        )
+    return seconds
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -26,6 +46,15 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--url", required=True, help="MCP endpoint URL to scan")
     parser.add_argument("--fail-on", choices=_FAIL_ON_CHOICES, default="critical")
     parser.add_argument("--allow-private", action="store_true")
+    parser.add_argument(
+        "--timeout-seconds",
+        type=_timeout_seconds,
+        default=TIMEOUT_DEFAULT_SECONDS,
+        help=(
+            f"overall scan time bound in seconds ({TIMEOUT_MIN_SECONDS}..{TIMEOUT_MAX_SECONDS}, "
+            f"default {TIMEOUT_DEFAULT_SECONDS})"
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -78,13 +107,40 @@ def _write_github_output(path: str, result: McpProbeResult, findings_json: str) 
         fh.write(f"findings-json={findings_json}\n")
 
 
-async def _run(url: str, *, allow_private: bool) -> McpProbeResult:
-    return await probe_mcp_endpoint(url, allow_private=allow_private)
+async def _run(url: str, *, allow_private: bool, timeout_seconds: float) -> tuple[McpProbeResult, bool]:
+    """Returns (result, timed_out). On timeout the probe task is cancelled and an `error`
+    result is synthesised, so the summary/outputs are still written."""
+    try:
+        result = await asyncio.wait_for(probe_mcp_endpoint(url, allow_private=allow_private), timeout_seconds)
+    except TimeoutError:
+        message = (
+            f"Scan timed out after {timeout_seconds:g} s (timeout-seconds) before the endpoint "
+            "finished answering; the step fails regardless of fail-on."
+        )
+        return McpProbeResult(url=url, status="error", summary=message, score=None), True
+    return result, False
 
 
-def main(argv: list[str] | None = None) -> int:
+def _run_bounded(url: str, *, allow_private: bool, timeout_seconds: float) -> tuple[McpProbeResult, bool]:
+    # Not asyncio.run(): it joins the default executor on exit, so a resolver thread stuck in
+    # getaddrinfo would keep the step alive past the timeout. loop.close() does not wait for it.
+    loop = asyncio.new_event_loop()
+    try:
+        outcome = loop.run_until_complete(
+            _run(url, allow_private=allow_private, timeout_seconds=timeout_seconds)
+        )
+        loop.run_until_complete(loop.shutdown_asyncgens())
+        return outcome
+    finally:
+        loop.close()
+
+
+def run(argv: list[str] | None = None) -> tuple[int, bool]:
+    """Runs the scan; returns (exit code, timed_out)."""
     args = _parse_args(argv)
-    result = asyncio.run(_run(args.url, allow_private=args.allow_private))
+    result, timed_out = _run_bounded(
+        args.url, allow_private=args.allow_private, timeout_seconds=args.timeout_seconds
+    )
 
     findings_json = json.dumps([f.to_dict() for f in result.findings])
     summary = _summary_markdown(result, api_key_configured=bool(os.environ.get("ADMINKIT_API_KEY")))
@@ -99,8 +155,19 @@ def main(argv: list[str] | None = None) -> int:
     if output_path:
         _write_github_output(output_path, result, findings_json)
 
-    return 1 if _should_fail(result, args.fail_on) else 0
+    return (1 if _should_fail(result, args.fail_on) else 0), timed_out
+
+
+def main(argv: list[str] | None = None) -> int:
+    return run(argv)[0]
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    code, timed_out = run()
+    if timed_out:
+        # A cancelled probe may leave a non-daemon resolver thread blocked in getaddrinfo, which
+        # the interpreter would join at exit. Summary and outputs are already written and closed.
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(code)
+    sys.exit(code)
