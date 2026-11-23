@@ -1,4 +1,4 @@
-"""`dns_lookup` tool (spec section 18.8): A/AAAA/MX/TXT/NS/CAA/PTR/SOA/CNAME lookup."""
+"""`dns_lookup` tool (spec section 18.8): A/AAAA/MX/TXT/NS/CAA/PTR/SOA/CNAME/SRV/SSHFP/TLSA lookup."""
 
 from __future__ import annotations
 
@@ -9,7 +9,9 @@ from adminkit_mcp.tools._common import map_check_result
 TOOL = "dns_lookup"
 DNS_LOOKUP_PAGE = "https://adminkit.net/tools/dns-lookup/"
 
-ALLOWED_TYPES = frozenset({"A", "AAAA", "MX", "TXT", "NS", "CAA", "PTR", "SOA", "CNAME"})
+ALLOWED_TYPES = frozenset(
+    {"A", "AAAA", "MX", "TXT", "NS", "CAA", "PTR", "SOA", "CNAME", "SRV", "SSHFP", "TLSA"}
+)
 
 
 async def dns_lookup(client: AdminKitClient, name: str, type: str = "A") -> ToolResponse:
@@ -23,8 +25,9 @@ async def dns_lookup(client: AdminKitClient, name: str, type: str = "A") -> Tool
         )
 
     try:
+        # The platform's dns check reads `options.types` (a list) and ignores unknown keys.
         resp = await client.call_api(
-            "POST", "/v1/check/dns", json={"target": name, "options": {"type": record_type}}
+            "POST", "/v1/check/dns", json={"target": name, "options": {"types": [record_type]}}
         )
     except ApiUnavailable:
         return await _from_site(client, name, record_type)
