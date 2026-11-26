@@ -6,7 +6,7 @@ import httpx
 
 from adminkit_mcp.client import AdminKitClient
 from adminkit_mcp.server import build_server
-from adminkit_mcp.tools.dns_lookup import ALLOWED_TYPES, dns_lookup
+from adminkit_mcp.tools.dns_lookup import ALLOWED_TYPES, SITE_FALLBACK_TYPES, dns_lookup
 from fakes.fake_api import (
     all_not_implemented_api,
     check_result_payload,
@@ -153,7 +153,7 @@ async def test_dns_lookup_still_rejects_any_and_axfr() -> None:
     assert all("type must be one of" in r.result["message"] for r in results)
 
 
-async def test_dns_lookup_tool_description_lists_all_12_types() -> None:
+async def test_dns_lookup_tool_description_lists_all_13_types() -> None:
     client = AdminKitClient(
         all_not_implemented_api(), all_not_implemented_api(base_url="https://adminkit.net")
     )
@@ -164,7 +164,7 @@ async def test_dns_lookup_tool_description_lists_all_12_types() -> None:
     description = tools["dns_lookup"].description or ""
     listed = description.split("`type` is one of ", 1)[1].split(".", 1)[0]
     assert {t.strip() for t in listed.replace("\n", " ").split(",")} == ALLOWED_TYPES
-    assert len(ALLOWED_TYPES) == 12
+    assert len(ALLOWED_TYPES) == 13
 
 
 async def test_dns_lookup_tool_tlsa_on_underscore_owner_name_round_trips() -> None:
@@ -186,3 +186,39 @@ async def test_dns_lookup_tool_tlsa_on_underscore_owner_name_round_trips() -> No
     assert isinstance(structured, dict)
     assert structured["status"] == "ok"
     assert seen == [{"target": "_443._tcp.example.com", "options": {"types": ["TLSA"]}}]
+
+
+async def test_dns_lookup_accepts_naptr_and_sends_types_option() -> None:
+    seen: list[dict[str, object]] = []
+    naptr = '50 50 "s" "SIPS+D2T" "" _sips._tcp.example.com.'
+    payload = check_result_payload(check="dns.lookup", target="example.com")
+    payload["evidence"] = {"records": {"NAPTR": [naptr]}}
+
+    def record(request: httpx.Request) -> httpx.Response:
+        seen.append(json.loads(request.content))
+        return httpx.Response(200, json=payload)
+
+    api = make_client({("POST", "/v1/check/dns"): record}, base_url="https://api.adminkit.net")
+    client = AdminKitClient(api, all_not_implemented_api(base_url="https://adminkit.net"))
+    try:
+        results = [await dns_lookup(client, "example.com", rtype) for rtype in ("naptr", "NAPTR")]
+    finally:
+        await client.aclose()
+    assert "NAPTR" in ALLOWED_TYPES
+    assert [r.status for r in results] == ["ok", "ok"]
+    assert seen == [{"target": "example.com", "options": {"types": ["NAPTR"]}}] * 2
+    assert results[0].evidence["records"] == {"NAPTR": [naptr]}
+
+
+async def test_dns_lookup_naptr_without_api_does_not_fall_back_to_site() -> None:
+    """The site `/api/dns` DoH proxy does not list NAPTR, so it is never asked for one."""
+    client = AdminKitClient(
+        all_not_implemented_api(), all_not_implemented_api(base_url="https://adminkit.net")
+    )
+    try:
+        result = await dns_lookup(client, "example.com", "NAPTR")
+    finally:
+        await client.aclose()
+    assert result.status == "error"
+    assert result.result["message"] == "NAPTR lookups need the AdminKit API, which is unavailable."
+    assert ALLOWED_TYPES - {"NAPTR"} == SITE_FALLBACK_TYPES

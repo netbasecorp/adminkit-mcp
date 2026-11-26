@@ -100,7 +100,7 @@ def build_server(client: AdminKitClient, *, settings: Settings | None = None) ->
     @_rate_limit_aware
     async def dns_lookup(name: str, type: str = "A") -> dict[str, Any]:
         """DNS lookup for a name. `type` is one of A, AAAA, MX, TXT, NS, CAA, PTR, SOA, CNAME,
-        SRV, SSHFP, TLSA. SRV/TLSA owner names may start with `_` service labels, e.g.
+        SRV, SSHFP, TLSA, NAPTR. SRV/TLSA owner names may start with `_` service labels, e.g.
         `_sip._tcp.example.com` or `_443._tcp.example.com`."""
         if hosted_mode:
             refused = await refuse_private_target("dns_lookup", name, report_url=DNS_LOOKUP_PAGE)
