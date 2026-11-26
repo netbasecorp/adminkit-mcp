@@ -17,13 +17,13 @@ import json
 import re
 from dataclasses import dataclass, field
 from typing import Any, Literal
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin, urlsplit, urlunsplit
 
 import httpx
 
 from adminkit_mcp import __version__
 from adminkit_mcp.probe.sse import iter_sse_events
-from adminkit_mcp.probe.targets import PrivateTargetError, check_target_allowed
+from adminkit_mcp.probe.targets import PrivateTargetError, check_target_allowed, pinned_async_client
 
 ProbeStatus = Literal["ok", "warn", "fail", "error", "skipped"]
 Severity = Literal["info", "low", "medium", "high", "critical"]
@@ -120,7 +120,10 @@ async def probe_mcp_endpoint(
 
     `client` lets tests and the GitHub Action inject an `httpx.AsyncClient` (e.g. one
     bound to a `MockTransport` or a real loopback fixture server); when omitted a
-    short-lived client is created and closed internally.
+    short-lived client is created and closed internally. Without `allow_private` that
+    internal client pins every connection to a vetted public address (DNS rebinding guard).
+    Server-controlled follow-up URLs (SSE message endpoint, OAuth authorization server)
+    are vetted the same way before they are requested.
     """
     try:
         await check_target_allowed(url, allow_private=allow_private)
@@ -128,23 +131,33 @@ async def probe_mcp_endpoint(
         return _skipped(url, str(exc))
 
     owns_client = client is None
-    http_client = client or httpx.AsyncClient()
+    if client is not None:
+        http_client = client
+    elif allow_private:
+        http_client = httpx.AsyncClient()
+    else:
+        http_client = pinned_async_client()
     try:
-        return await _probe(url, http_client, timeout)
+        return await _probe(url, http_client, timeout, allow_private=allow_private)
     finally:
         if owns_client:
             await http_client.aclose()
 
 
-async def _probe(url: str, client: httpx.AsyncClient, timeout: float) -> McpProbeResult:
+async def _probe(
+    url: str, client: httpx.AsyncClient, timeout: float, *, allow_private: bool = False
+) -> McpProbeResult:
     is_tls = urlsplit(url).scheme == "https"
     evidence: dict[str, Any] = {"tls": is_tls, "transport": None}
     findings: list[McpFinding] = []
+    refused_hops: list[dict[str, str]] = []
 
     streamable = await _probe_streamable_http(url, client, timeout)
     if streamable is None:
-        legacy = await _probe_legacy_sse(url, client, timeout)
+        legacy = await _probe_legacy_sse(url, client, timeout, allow_private, refused_hops)
         if legacy is None:
+            if refused_hops:
+                evidence["refused_hops"] = refused_hops
             return _error(url, "could not reach MCP endpoint via streamable HTTP or legacy SSE", evidence)
         evidence["transport"] = "legacy-sse"
         _apply_transport_result(legacy, evidence, findings)
@@ -164,9 +177,11 @@ async def _probe(url: str, client: httpx.AsyncClient, timeout: float) -> McpProb
             )
         )
 
-    oauth_meta = await _discover_oauth_metadata(url, client, timeout)
+    oauth_meta = await _discover_oauth_metadata(url, client, timeout, allow_private, refused_hops)
     if oauth_meta:
         evidence["oauth_metadata"] = oauth_meta
+    if refused_hops:
+        evidence["refused_hops"] = refused_hops
 
     score = _score(findings)
     status = _status_for(findings)
@@ -305,7 +320,29 @@ def _parse_body(resp: httpx.Response) -> Any:
         return None
 
 
-async def _probe_legacy_sse(url: str, client: httpx.AsyncClient, timeout: float) -> _TransportResult | None:
+def _origin(url: str) -> tuple[str, str, int | None]:
+    parts = urlsplit(url)
+    scheme = parts.scheme.lower()
+    port = parts.port or {"http": 80, "https": 443}.get(scheme)
+    return scheme, (parts.hostname or "").lower(), port
+
+
+async def _hop_refusal(url: str, allow_private: bool) -> str | None:
+    """Why a server-supplied follow-up URL must not be requested, or None if it may be."""
+    try:
+        await check_target_allowed(url, allow_private=allow_private)
+    except PrivateTargetError as exc:
+        return str(exc)
+    return None
+
+
+async def _probe_legacy_sse(
+    url: str,
+    client: httpx.AsyncClient,
+    timeout: float,
+    allow_private: bool = False,
+    refused_hops: list[dict[str, str]] | None = None,
+) -> _TransportResult | None:
     """Legacy MCP HTTP+SSE transport: GET an SSE stream, read an `endpoint` event naming
     the POST URL for JSON-RPC requests, then read replies back over the same stream."""
     origin = f"{urlsplit(url).scheme}://{urlsplit(url).netloc}"
@@ -327,6 +364,17 @@ async def _probe_legacy_sse(url: str, client: httpx.AsyncClient, timeout: float)
                 return _TransportResult(auth_required=True, init_status=resp.status_code)
 
             message_url = urljoin(sse_url, endpoint)
+            # The endpoint comes from the probed server: never let it move the probe to
+            # another origin, and vet it like the user URL.
+            reason: str | None = None
+            if _origin(message_url) != _origin(sse_url):
+                reason = "SSE message endpoint is not on the same origin as the SSE stream"
+            else:
+                reason = await _hop_refusal(message_url, allow_private)
+            if reason is not None:
+                if refused_hops is not None:
+                    refused_hops.append({"hop": "sse_message_endpoint", "reason": reason})
+                return None
             init_resp = await client.post(
                 message_url,
                 content=_jsonrpc_request(1, "initialize", _INITIALIZE_PARAMS),
@@ -387,8 +435,28 @@ async def _read_matching_message(
     return None
 
 
+def _as_metadata_url(issuer: str) -> str | None:
+    """`<issuer>/.well-known/oauth-authorization-server`, or None for an unusable issuer
+    (not http(s), no host, userinfo, query or fragment)."""
+    try:
+        parts = urlsplit(issuer.strip())
+        _ = parts.port
+    except ValueError:
+        return None
+    if parts.scheme.lower() not in ("http", "https") or not parts.hostname:
+        return None
+    if parts.query or parts.fragment or "?" in issuer or "#" in issuer or "@" in parts.netloc:
+        return None
+    path = parts.path.rstrip("/") + "/.well-known/oauth-authorization-server"
+    return urlunsplit((parts.scheme, parts.netloc, path, "", ""))
+
+
 async def _discover_oauth_metadata(
-    url: str, client: httpx.AsyncClient, timeout: float
+    url: str,
+    client: httpx.AsyncClient,
+    timeout: float,
+    allow_private: bool = False,
+    refused_hops: list[dict[str, str]] | None = None,
 ) -> dict[str, Any] | None:
     origin = f"{urlsplit(url).scheme}://{urlsplit(url).netloc}"
     try:
@@ -411,7 +479,16 @@ async def _discover_oauth_metadata(
     out: dict[str, Any] = {"protected_resource": data}
     auth_servers = data.get("authorization_servers")
     if isinstance(auth_servers, list) and auth_servers and isinstance(auth_servers[0], str):
-        as_meta_url = auth_servers[0].rstrip("/") + "/.well-known/oauth-authorization-server"
+        as_meta_url = _as_metadata_url(auth_servers[0])
+        reason: str | None
+        if as_meta_url is None:
+            reason = "authorization server issuer is not a plain http(s) URL"
+        else:
+            reason = await _hop_refusal(as_meta_url, allow_private)
+        if reason is not None or as_meta_url is None:
+            if refused_hops is not None:
+                refused_hops.append({"hop": "oauth_authorization_server", "reason": reason or ""})
+            return out
         try:
             as_resp = await client.get(as_meta_url, headers={"Accept": "application/json"}, timeout=timeout)
             if as_resp.status_code == 200:
