@@ -6,7 +6,7 @@ import httpx
 
 from adminkit_mcp.client import AdminKitClient
 from adminkit_mcp.server import build_server
-from adminkit_mcp.tools.dns_lookup import ALLOWED_TYPES, SITE_FALLBACK_TYPES, dns_lookup
+from adminkit_mcp.tools.dns_lookup import ALLOWED_TYPES, dns_lookup
 from fakes.fake_api import (
     all_not_implemented_api,
     check_result_payload,
@@ -210,15 +210,29 @@ async def test_dns_lookup_accepts_naptr_and_sends_types_option() -> None:
     assert results[0].evidence["records"] == {"NAPTR": [naptr]}
 
 
-async def test_dns_lookup_naptr_without_api_does_not_fall_back_to_site() -> None:
-    """The site `/api/dns` DoH proxy does not list NAPTR, so it is never asked for one."""
-    client = AdminKitClient(
-        all_not_implemented_api(), all_not_implemented_api(base_url="https://adminkit.net")
-    )
+async def test_dns_lookup_site_fallback_for_naptr() -> None:
+    """The site `/api/dns` DoH proxy accepts NAPTR, so it falls back like every other type."""
+    seen: list[dict[str, str]] = []
+    answers = [
+        {
+            "name": "example.com",
+            "type": "NAPTR",
+            "ttl": 3600,
+            "data": '50 50 "s" "SIPS+D2T" "" _sips._tcp.example.com.',
+        }
+    ]
+
+    def record(request: httpx.Request) -> httpx.Response:
+        seen.append(dict(request.url.params))
+        return httpx.Response(200, json=dns_payload(name="example.com", type_="NAPTR", answers=answers))
+
+    site = make_client({("GET", "/api/dns"): record}, base_url="https://adminkit.net")
+    client = AdminKitClient(all_not_implemented_api(), site)
     try:
-        result = await dns_lookup(client, "example.com", "NAPTR")
+        result = await dns_lookup(client, "example.com", "naptr")
     finally:
         await client.aclose()
-    assert result.status == "error"
-    assert result.result["message"] == "NAPTR lookups need the AdminKit API, which is unavailable."
-    assert ALLOWED_TYPES - {"NAPTR"} == SITE_FALLBACK_TYPES
+    assert result.status == "ok"
+    assert seen == [{"name": "example.com", "type": "NAPTR"}]
+    assert result.result["type"] == "NAPTR"
+    assert result.result["answers"] == answers

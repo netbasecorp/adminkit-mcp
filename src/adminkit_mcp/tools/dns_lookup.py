@@ -12,9 +12,6 @@ DNS_LOOKUP_PAGE = "https://adminkit.net/tools/dns-lookup/"
 ALLOWED_TYPES = frozenset(
     {"A", "AAAA", "MX", "TXT", "NS", "CAA", "PTR", "SOA", "CNAME", "SRV", "SSHFP", "TLSA", "NAPTR"}
 )
-#: Types the site `/api/dns` DoH proxy (the fallback below) accepts; it does not list NAPTR, so a
-#: NAPTR lookup needs the live API and is not retried against the site.
-SITE_FALLBACK_TYPES = ALLOWED_TYPES - {"NAPTR"}
 
 
 async def dns_lookup(client: AdminKitClient, name: str, type: str = "A") -> ToolResponse:
@@ -33,14 +30,6 @@ async def dns_lookup(client: AdminKitClient, name: str, type: str = "A") -> Tool
             "POST", "/v1/check/dns", json={"target": name, "options": {"types": [record_type]}}
         )
     except ApiUnavailable:
-        if record_type not in SITE_FALLBACK_TYPES:
-            return ToolResponse(
-                tool=TOOL,
-                status="error",
-                result={"message": f"{record_type} lookups need the AdminKit API, which is unavailable."},
-                fix_hint="Try again later.",
-                report_url=DNS_LOOKUP_PAGE,
-            )
         return await _from_site(client, name, record_type)
     return map_check_result(TOOL, resp.json(), fallback_report_url=DNS_LOOKUP_PAGE)
 
