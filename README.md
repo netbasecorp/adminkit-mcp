@@ -1,7 +1,5 @@
 # AdminKit MCP server + MCP endpoint scan Action
 
-[![netbasecorp/adminkit-mcp MCP server](https://glama.ai/mcp/servers/netbasecorp/adminkit-mcp/badges/score.svg)](https://glama.ai/mcp/servers/netbasecorp/adminkit-mcp)
-
 <!-- mcp-name: io.github.netbasecorp/adminkit-mcp -->
 
 Open-source [Model Context Protocol](https://modelcontextprotocol.io) server that gives AI agents
