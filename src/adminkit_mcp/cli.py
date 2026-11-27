@@ -37,7 +37,8 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     )
     probe_parser.add_argument("url", help="MCP endpoint URL to probe")
     probe_parser.add_argument("--allow-private", action="store_true", dest="probe_allow_private")
-    probe_parser.add_argument("--timeout", type=float, default=8.0)
+    probe_parser.add_argument("--timeout", type=float, default=8.0, help="per-request timeout (s)")
+    probe_parser.add_argument("--deadline", type=float, default=20.0, help="overall probe deadline (s)")
 
     return parser
 
@@ -47,8 +48,8 @@ def _parse_http_target(value: str) -> tuple[str, int]:
     return (host or "127.0.0.1", int(port_s))
 
 
-async def _run_probe(url: str, *, allow_private: bool, timeout: float) -> int:
-    result = await probe_mcp_endpoint(url, allow_private=allow_private, timeout=timeout)
+async def _run_probe(url: str, *, allow_private: bool, timeout: float, deadline: float) -> int:
+    result = await probe_mcp_endpoint(url, allow_private=allow_private, timeout=timeout, deadline=deadline)
     print(json.dumps(result.to_dict(), indent=2))  # noqa: T201 -- this is the command's output
     return 0 if result.status != "error" else 1
 
@@ -57,7 +58,11 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_arg_parser().parse_args(argv)
 
     if args.command == "probe":
-        return asyncio.run(_run_probe(args.url, allow_private=args.probe_allow_private, timeout=args.timeout))
+        return asyncio.run(
+            _run_probe(
+                args.url, allow_private=args.probe_allow_private, timeout=args.timeout, deadline=args.deadline
+            )
+        )
 
     settings = Settings.from_env()
     if args.allow_private:

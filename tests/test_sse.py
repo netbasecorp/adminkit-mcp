@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator
 
-from adminkit_mcp.probe.sse import SseEvent, iter_sse_events
+import pytest
+
+from adminkit_mcp.probe.sse import SseEvent, StreamLimitError, iter_capped_lines, iter_sse_events
 
 
 async def _lines(*values: str) -> AsyncIterator[str]:
@@ -38,3 +40,36 @@ async def test_parses_multiple_events_in_sequence() -> None:
         )
     ]
     assert [e.event for e in events] == ["endpoint", "message"]
+
+
+async def _chunks(*values: bytes) -> AsyncIterator[bytes]:
+    for value in values:
+        yield value
+
+
+async def test_capped_lines_split_across_chunks_and_strip_cr() -> None:
+    lines = iter_capped_lines(
+        _chunks(b"event: end", b"point\r\ndata: /m\n", b"\n"), max_line_bytes=64, max_total_bytes=64
+    )
+    assert [line async for line in lines] == ["event: endpoint", "data: /m", ""]
+
+
+async def test_capped_lines_refuse_an_unterminated_long_line() -> None:
+    lines = iter_capped_lines(_chunks(b"data: ", b"x" * 100), max_line_bytes=64, max_total_bytes=1024)
+    with pytest.raises(StreamLimitError) as exc:
+        _ = [line async for line in lines]
+    assert exc.value.limit == "sse_event_bytes"
+
+
+async def test_capped_lines_refuse_a_long_stream() -> None:
+    lines = iter_capped_lines(_chunks(*[b": ping\n"] * 100), max_line_bytes=64, max_total_bytes=256)
+    with pytest.raises(StreamLimitError) as exc:
+        _ = [line async for line in lines]
+    assert exc.value.limit == "stream_bytes"
+
+
+async def test_event_cap_counts_joined_data_lines() -> None:
+    events = iter_sse_events(_lines(*["data: 0123456789"] * 10, ""), max_event_bytes=50)
+    with pytest.raises(StreamLimitError) as exc:
+        _ = [e async for e in events]
+    assert exc.value.limit == "sse_event_bytes"

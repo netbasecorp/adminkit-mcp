@@ -110,7 +110,7 @@ class _Handler(BaseHTTPRequestHandler):
             self.config.received_methods.append(method)
 
         if path.startswith("/messages"):
-            self._handle_legacy_message(path, method, data.get("id"))
+            self._handle_legacy_message(self.path, method, data.get("id"))
         elif path in ("/mcp", "/") and self.config.support_streamable_http:
             self._handle_streamable(method, data.get("id"))
         else:
