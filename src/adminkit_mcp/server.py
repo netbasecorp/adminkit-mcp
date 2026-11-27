@@ -103,7 +103,9 @@ def build_server(client: AdminKitClient, *, settings: Settings | None = None) ->
         SRV, SSHFP, TLSA, NAPTR. SRV/TLSA owner names may start with `_` service labels, e.g.
         `_sip._tcp.example.com` or `_443._tcp.example.com`."""
         if hosted_mode:
-            refused = await refuse_private_target("dns_lookup", name, report_url=DNS_LOOKUP_PAGE)
+            refused = await refuse_private_target(
+                "dns_lookup", name, report_url=DNS_LOOKUP_PAGE, require_resolvable=False
+            )
             if refused:
                 return refused.to_dict()
         return (await _dns_lookup(client, name, type)).to_dict()
@@ -113,7 +115,9 @@ def build_server(client: AdminKitClient, *, settings: Settings | None = None) ->
     async def check_mail_auth(domain: str) -> dict[str, Any]:
         """Check SPF and DMARC posture for a domain's outbound mail authentication."""
         if hosted_mode:
-            refused = await refuse_private_target("check_mail_auth", domain, report_url=MAIL_AUTH_PAGE)
+            refused = await refuse_private_target(
+                "check_mail_auth", domain, report_url=MAIL_AUTH_PAGE, require_resolvable=False
+            )
             if refused:
                 return refused.to_dict()
         return (await _check_mail_auth(client, domain)).to_dict()

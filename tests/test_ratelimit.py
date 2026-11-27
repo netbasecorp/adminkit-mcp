@@ -43,13 +43,51 @@ def test_per_client_rate_limiter_isolates_keys() -> None:
     assert limiter.allow("5.6.7.8") is True  # a different key has its own, untouched bucket
 
 
-def test_per_client_rate_limiter_evicts_once_past_max_keys() -> None:
+def test_per_client_rate_limiter_evicts_least_recently_used_key() -> None:
     limiter = PerClientRateLimiter(rate=1.0, burst=1.0, max_keys=2)
     assert limiter.allow("a") is True
     assert limiter.allow("b") is True
-    assert limiter.allow("a") is False  # "a"'s bucket is still fresh, one token already spent
+    assert limiter.allow("a") is False  # "a"'s single token is spent; "a" is now most recent
 
-    # A third distinct key pushes the bucket dict past max_keys, triggering the crude
-    # clear-everything eviction -- "a" gets a brand new, full bucket afterwards.
+    # A third distinct key evicts only the least-recently-used bucket ("b"), never "a".
     assert limiter.allow("c") is True
-    assert limiter.allow("a") is True
+    assert len(limiter) == 2
+    assert "b" not in limiter
+    assert limiter.allow("a") is False  # "a" kept its spent bucket: no free reset
+
+
+def test_per_client_rate_limiter_rejects_non_positive_max_keys() -> None:
+    with pytest.raises(ValueError):
+        PerClientRateLimiter(rate=1.0, max_keys=0)
+
+
+def test_per_client_limiter_eviction_does_not_reset_throttled_key() -> None:
+    max_keys = 10_000
+    rate = 1.0 / 3600  # no measurable refill during the test
+    limiter = PerClientRateLimiter(rate=rate, burst=1.0, max_keys=max_keys)
+
+    # 1) The attacker keeps hammering while flooding the map with max_keys other keys: every
+    #    refused request marks "A" as recently used, so it is never evicted and stays throttled.
+    assert limiter.allow("A") is True
+    assert limiter.allow("A") is False
+    for i in range(max_keys):
+        limiter.allow(f"flood-{i}")
+        assert len(limiter) <= max_keys
+        if i % 100 == 0:
+            assert limiter.allow("A") is False
+    assert "A" in limiter
+    assert limiter.allow("A") is False
+
+    # 2) If "A" goes quiet, it is evicted only once it is the least-recently-used key, and the
+    #    flood evicts strictly oldest-first.
+    quiet = PerClientRateLimiter(rate=rate, burst=1.0, max_keys=max_keys)
+    assert quiet.allow("A") is True
+    assert quiet.allow("A") is False
+    for i in range(max_keys - 1):
+        quiet.allow(f"old-{i}")
+    assert len(quiet) == max_keys and "A" in quiet
+    quiet.allow("new-0")  # the map is full: the LRU key ("A") goes first
+    assert "A" not in quiet and "old-0" in quiet
+    quiet.allow("new-1")
+    assert "old-0" not in quiet and "old-1" in quiet  # then the next oldest, and so on
+    assert len(quiet) == max_keys

@@ -16,8 +16,9 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import re
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, Literal
 from urllib.parse import urlsplit
 
 import httpcore
@@ -125,6 +126,75 @@ async def resolve_host_is_private(host: str) -> bool:
         # Unresolvable hosts are rejected later by the HTTP call itself; do not block here.
         return False
     return any(_is_private_ip(ipaddress.ip_address(addr.split("%", 1)[0])) for addr in addresses)
+
+
+# One DNS label: letters, digits, hyphen, and underscore (SRV/TLSA/_dmarc owner names).
+_LABEL_RE = re.compile(r"^[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?$")
+# A last label that is all digits or hex-prefixed is an inet_aton shorthand ("127.1",
+# "0x7f.1", "2130706433"), never a real TLD, and resolvers would turn it into an address.
+_NUMERIC_LABEL_RE = re.compile(r"^(?:\d+|0x[0-9a-f]*)$")
+
+HostedTargetVerdict = Literal["public", "private", "invalid", "unresolvable"]
+
+
+def normalize_target_host(value: str) -> str | None:
+    """Reduces a user-supplied host/URL argument to the bare host it names, or `None` if it
+    does not name one: strips surrounding whitespace, any `scheme://`, userinfo, port, path,
+    query, IPv6 brackets, trailing dots, and lowercases. IP literals come back in canonical
+    form (`ipaddress` string), hostnames only if every label is syntactically valid."""
+    text = value.strip()
+    if not text:
+        return None
+    ip = _parse_ip(text.rstrip("."))
+    if ip is not None:
+        return str(ip)
+    try:
+        parts = urlsplit(text if "://" in text else "//" + text)
+        host = parts.hostname
+        parts.port  # noqa: B018 -- raises ValueError on a malformed port
+    except ValueError:
+        return None
+    if not host:
+        return None
+    host = host.rstrip(".")
+    ip = _parse_ip(host)
+    if ip is not None:
+        return str(ip)
+    labels = host.split(".")
+    if len(host) > 253 or not all(_LABEL_RE.match(label) for label in labels):
+        return None
+    if _NUMERIC_LABEL_RE.match(labels[-1]):
+        return None
+    return host
+
+
+async def classify_hosted_target(value: str) -> tuple[HostedTargetVerdict, str | None]:
+    """Strict classification for the public hosted endpoint (plan row A14), which must fail
+    closed: returns the verdict and the normalised host. `invalid` = the argument does not
+    parse to a host at all; `unresolvable` = a well-formed hostname with no address (DNS
+    failure or empty answer); `private` = a local name, a private literal, or ANY resolved
+    address non-public; otherwise `public`. Unlike `resolve_host_is_private` (used by
+    self-hosted probing, whose pinned HTTP backend re-checks every connection anyway), an
+    unresolvable name is never reported as public here."""
+    host = normalize_target_host(value)
+    if host is None:
+        return "invalid", None
+    if host in _LOCAL_NAMES or host.endswith(".localhost"):
+        return "private", host
+    ip = _parse_ip(host)
+    if ip is not None:
+        return ("private" if _is_private_ip(ip) else "public"), host
+    try:
+        addresses = await _resolve(host)
+    except (OSError, UnicodeError):
+        return "unresolvable", host
+    if not addresses:
+        return "unresolvable", host
+    for addr in addresses:
+        addr_ip = _parse_ip(addr)
+        if addr_ip is None or _is_private_ip(addr_ip):
+            return "private", host
+    return "public", host
 
 
 async def check_target_allowed(url: str, *, allow_private: bool) -> None:

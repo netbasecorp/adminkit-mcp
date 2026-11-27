@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import socket
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from dataclasses import replace
@@ -18,7 +19,7 @@ import pytest
 import adminkit_mcp
 from adminkit_mcp.client import AdminKitClient
 from adminkit_mcp.config import Settings, for_hosted_http
-from adminkit_mcp.hosted import build_hosted_http_app
+from adminkit_mcp.hosted import build_hosted_http_app, client_rate_limit_key, refuse_private_target
 from adminkit_mcp.server import build_server
 from fakes.fake_api import all_not_implemented_api, make_recording_client
 
@@ -232,3 +233,157 @@ async def test_api_key_is_forwarded_outside_hosted_mode(monkeypatch: pytest.Monk
         assert api_headers.get("x-api-key") == "super-secret-key"
     finally:
         await client.aclose()
+
+
+def test_hosted_keys_ipv6_clients_by_64() -> None:
+    a1 = client_rate_limit_key("2001:db8:1:2:aaaa::1")
+    a2 = client_rate_limit_key("2001:db8:1:2:ffff:ffff:ffff:ffff")
+    other = client_rate_limit_key("2001:db8:1:3::1")
+    assert a1 == a2 == "2001:db8:1:2::/64"
+    assert other != a1
+    # IPv4 is keyed by the /32 address, unchanged; IPv4-mapped IPv6 by its embedded IPv4.
+    assert client_rate_limit_key("203.0.113.5") == "203.0.113.5"
+    assert client_rate_limit_key("203.0.113.6") != client_rate_limit_key("203.0.113.5")
+    assert client_rate_limit_key("::ffff:203.0.113.5") == "203.0.113.5"
+    assert client_rate_limit_key("fe80::1%eth0") == "fe80::/64"
+    assert client_rate_limit_key("unknown") == "unknown"
+
+
+async def test_hosted_rate_limit_shares_one_bucket_per_ipv6_64() -> None:
+    """End to end: a second address in the same /64 is throttled, another /64 is not."""
+    api = all_not_implemented_api()
+    site = all_not_implemented_api(base_url="https://adminkit.net")
+    client = AdminKitClient(api, site)
+    settings = replace(
+        for_hosted_http(Settings()), hosted_rate_limit_per_minute=60.0, hosted_rate_limit_burst=1.0
+    )
+    app = _hosted_app(settings, client=client)
+
+    statuses: list[int] = []
+    async with _run_asgi_lifespan(app):
+        for addr in ("2001:db8:1:2::1", "2001:db8:1:2::2", "2001:db8:1:3::1"):
+            transport = httpx.ASGITransport(app=app, client=(addr, 1))
+            async with httpx.AsyncClient(transport=transport, base_url=_BASE_URL) as http_client:
+                resp = await http_client.post("/mcp", content=_INITIALIZE_BODY, headers=_MCP_HEADERS)
+                statuses.append(resp.status_code)
+    await client.aclose()
+
+    assert statuses == [200, 429, 200]
+
+
+def _fake_resolver(monkeypatch: pytest.MonkeyPatch, answers: dict[str, list[str]]) -> list[str]:
+    """Replaces getaddrinfo with a table lookup (no real DNS); unknown names raise OSError."""
+    asked: list[str] = []
+
+    async def fake_getaddrinfo(host: str, port: object, **kwargs: object) -> list[object]:
+        asked.append(host)
+        if host not in answers:
+            raise OSError("name resolution failed")
+        return [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (addr, 0)) for addr in answers[host]]
+
+    monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", fake_getaddrinfo)
+    return asked
+
+
+_BYPASS_INPUTS = ["127.0.0.1.", "10.0.0.1:22", " 10.0.0.1", "http://127.0.0.1/", "[::1]:80"]
+
+
+@pytest.mark.parametrize("target", _BYPASS_INPUTS)
+@pytest.mark.parametrize("tool,arg", [("dns_lookup", "name"), ("check_domain", "domain")])
+async def test_hosted_refuses_trailing_dot_and_port_suffixed_private_literals(
+    monkeypatch: pytest.MonkeyPatch, target: str, tool: str, arg: str
+) -> None:
+    asked = _fake_resolver(monkeypatch, {})
+    calls: list[str] = []
+    api = make_recording_client(calls, {}, base_url="https://api.adminkit.net")
+    site = all_not_implemented_api(base_url="https://adminkit.net")
+    client = AdminKitClient(api, site)
+    mcp = build_server(client, settings=for_hosted_http(Settings()))
+
+    try:
+        result = await mcp.call_tool(tool, {arg: target})
+    finally:
+        await client.aclose()
+    structured = cast("dict[str, Any]", result[1])  # type: ignore[index]
+
+    assert not calls, "the Check API must never be called for a refused private target"
+    assert not asked, "a private literal must be refused without any DNS lookup"
+    assert structured["status"] == "skipped"
+    assert "private/loopback" in structured["result"]["message"]
+
+
+@pytest.mark.parametrize("target", _BYPASS_INPUTS)
+async def test_refuse_private_target_normalises_bypass_inputs(
+    monkeypatch: pytest.MonkeyPatch, target: str
+) -> None:
+    _fake_resolver(monkeypatch, {})
+    for is_url in (False, True):
+        refused = await refuse_private_target("t", target, report_url=None, is_url=is_url)
+        assert refused is not None and refused.status == "skipped"
+
+
+async def test_hosted_example_com_handling_unchanged(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A public name (fake resolver answer) still goes through to the Check API, with or
+    without a trailing dot / URL form; a name resolving to a private address is refused."""
+    _fake_resolver(monkeypatch, {"example.com": ["93.184.216.34"], "internal.example.com": ["10.1.2.3"]})
+    for value in ("example.com", "example.com.", " Example.COM ", "https://example.com/x"):
+        assert await refuse_private_target("check_domain", value, report_url=None) is None
+    refused = await refuse_private_target("check_domain", "internal.example.com", report_url=None)
+    assert refused is not None and "private/loopback" in refused.result["message"]
+
+    payload: dict[str, Any] = {
+        "check": "dns",
+        "target": "example.com",
+        "status": "ok",
+        "summary": "",
+        "findings": [],
+        "evidence": {},
+        "score": None,
+        "duration_ms": 1,
+        "version": "1",
+        "report_url": None,
+    }
+    calls: list[str] = []
+    api = make_recording_client(
+        calls,
+        {("POST", "/v1/check/dns"): lambda _req: httpx.Response(200, json=payload)},
+        base_url="https://api.adminkit.net",
+    )
+    site = all_not_implemented_api(base_url="https://adminkit.net")
+    client = AdminKitClient(api, site)
+    mcp = build_server(client, settings=for_hosted_http(Settings()))
+    try:
+        await mcp.call_tool("dns_lookup", {"name": "example.com"})
+    finally:
+        await client.aclose()
+    assert calls == ["POST /v1/check/dns"]
+
+
+@pytest.mark.parametrize(
+    "target", ["", "   ", "http://", "10.0.0.1:notaport", "exa mple.com", "127.1", "0x7f.1", "2130706433"]
+)
+async def test_hosted_refuses_unparseable_targets(monkeypatch: pytest.MonkeyPatch, target: str) -> None:
+    _fake_resolver(monkeypatch, {})
+    refused = await refuse_private_target("check_domain", target, report_url=None)
+    assert refused is not None and refused.status == "skipped"
+
+
+async def test_hosted_unresolvable_name_refused_only_for_connecting_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fail closed for tools that connect to the target; DNS-only tools may look up
+    record-only names such as `_dmarc.example.com` that have no address."""
+    _fake_resolver(monkeypatch, {})
+    refused = await refuse_private_target("check_domain", "nx.example.test", report_url=None)
+    assert refused is not None and "does not resolve" in refused.result["message"]
+    assert (
+        await refuse_private_target(
+            "dns_lookup", "_dmarc.example.test", report_url=None, require_resolvable=False
+        )
+        is None
+    )
+    # ...but a private literal is still refused for DNS-only tools.
+    assert (
+        await refuse_private_target("dns_lookup", "127.0.0.1.", report_url=None, require_resolvable=False)
+        is not None
+    )

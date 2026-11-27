@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import math
 import time
+from collections import OrderedDict
 
 
 class RateLimiter:
@@ -63,22 +64,35 @@ class PerClientRateLimiter:
     public hosted endpoint throttles each caller separately instead of sharing one global
     budget a single noisy client could exhaust for everyone else.
 
-    `max_keys` bounds memory on a long-running hosted process: once the bucket dict would
-    grow past it, it is cleared outright (a crude but safe eviction — a client that loses
-    its accumulated tokens this way simply gets a fresh, full bucket, never a 429 it didn't
-    earn)."""
+    `max_keys` bounds memory on a long-running hosted process: buckets live in an LRU
+    `OrderedDict`, and once it holds `max_keys` buckets a new key evicts only the
+    least-recently-used one. Every `allow` call (allowed or refused) marks its key as
+    recently used, so a client hammering the endpoint keeps its own (empty) bucket alive and
+    cannot reset it by flooding the map with other keys; the key being served is never the
+    one evicted."""
 
     def __init__(self, rate: float, burst: float | None = None, *, max_keys: int = 10_000) -> None:
+        if max_keys <= 0:
+            raise ValueError("max_keys must be positive")
         self._rate = rate
         self._burst = burst
         self._max_keys = max_keys
-        self._buckets: dict[str, RateLimiter] = {}
+        # Ordered least- to most-recently used.
+        self._buckets: OrderedDict[str, RateLimiter] = OrderedDict()
+
+    def __len__(self) -> int:
+        return len(self._buckets)
+
+    def __contains__(self, key: object) -> bool:
+        return key in self._buckets
 
     def allow(self, key: str) -> bool:
         bucket = self._buckets.get(key)
-        if bucket is None:
-            if len(self._buckets) >= self._max_keys:
-                self._buckets.clear()
+        if bucket is not None:
+            self._buckets.move_to_end(key)
+        else:
+            while len(self._buckets) >= self._max_keys:
+                self._buckets.popitem(last=False)
             bucket = RateLimiter(self._rate, self._burst)
             self._buckets[key] = bucket
         return bucket.try_acquire()
