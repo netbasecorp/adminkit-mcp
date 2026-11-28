@@ -145,6 +145,10 @@ def normalize_target_host(value: str) -> str | None:
     text = value.strip()
     if not text:
         return None
+    # urlsplit silently deletes tab/CR/LF anywhere in the input ("a\n.example.com" would
+    # come back as "a.example.com"); a host argument containing them is malformed, not a host.
+    if any(ch in text for ch in "\t\r\n"):
+        return None
     ip = _parse_ip(text.rstrip("."))
     if ip is not None:
         return str(ip)
@@ -161,9 +165,9 @@ def normalize_target_host(value: str) -> str | None:
     if ip is not None:
         return str(ip)
     labels = host.split(".")
-    if len(host) > 253 or not all(_LABEL_RE.match(label) for label in labels):
+    if len(host) > 253 or not all(_LABEL_RE.fullmatch(label) for label in labels):
         return None
-    if _NUMERIC_LABEL_RE.match(labels[-1]):
+    if _NUMERIC_LABEL_RE.fullmatch(labels[-1]):
         return None
     return host
 

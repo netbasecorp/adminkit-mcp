@@ -5,7 +5,12 @@ import socket
 
 import pytest
 
-from adminkit_mcp.probe.targets import PrivateTargetError, check_target_allowed, resolve_host_is_private
+from adminkit_mcp.probe.targets import (
+    PrivateTargetError,
+    check_target_allowed,
+    normalize_target_host,
+    resolve_host_is_private,
+)
 
 
 @pytest.mark.parametrize(
@@ -60,3 +65,31 @@ async def test_unresolvable_hostname_is_not_treated_as_private(monkeypatch: pyte
 
     monkeypatch.setattr(asyncio.get_running_loop(), "getaddrinfo", fake_getaddrinfo)
     assert await resolve_host_is_private("does-not-resolve.example.test") is False
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "a\n.example.com",
+        "https://a\n.example.com/mcp",
+        "a\r.example.com",
+        "a\t.example.com",
+        "a.example\n.com",
+    ],
+)
+def test_normalize_target_host_rejects_embedded_newline(value: str) -> None:
+    assert normalize_target_host(value) is None
+
+
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("a.example.com", "a.example.com"),
+        (" https://A.Example.com:8443/mcp \n", "a.example.com"),
+        ("_25._tcp.mail.example.com", "_25._tcp.mail.example.com"),
+        ("example.com.", "example.com"),
+        ("127.1", None),
+    ],
+)
+def test_normalize_target_host_valid_cases_unchanged(value: str, expected: str | None) -> None:
+    assert normalize_target_host(value) == expected
